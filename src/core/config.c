@@ -36,6 +36,8 @@ void alps_config_init_defaults(alps_config_t *cfg) {
     /* 2D Kinetic Scroll feature defaults */
     cfg->scroll.enabled               = ALPS_DEFAULT_SCROLL_ENABLED;
     cfg->scroll.hires_multiplier      = ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER;
+    cfg->scroll.progressive_enabled   = ALPS_DEFAULT_SCROLL_PROGRESSIVE;
+    cfg->scroll.accel_factor          = ALPS_DEFAULT_SCROLL_ACCEL_FACTOR;
     cfg->scroll.dominance_ratio       = ALPS_DEFAULT_SCROLL_DOMINANCE_RATIO;
     cfg->scroll.axis_lock_enabled     = ALPS_DEFAULT_SCROLL_AXIS_LOCK;
     cfg->scroll.counter_drift_enabled = ALPS_DEFAULT_SCROLL_COUNTER_DRIFT;
@@ -85,9 +87,12 @@ void alps_config_print_help(const char *prog_name) {
     printf("      --no-anti-drift          Disable reverse contact-shear snap on tap release\n\n");
     printf("2D Kinetic Scroll Options:\n");
     printf("      --no-scroll              Disable middle-button trackstick scrolling\n");
-    printf("      --scroll-speed <mult>    Hi-res units per count [1..120] (default: %d)\n",
+    printf("      --scroll-speed <mult>    Base hi-res units per count [1..60] (default: %d)\n",
            ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER);
-    printf("      --no-axis-lock           Disable cross-axis deadband (allow free 2D diagonal)\n");
+    printf("      --linear-scroll          Disable progressive ballistics (force linear scaling)\n");
+    printf("      --scroll-accel <power>   Progressive acceleration power factor [0..20] (default: %d)\n",
+           ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
+    printf("      --no-axis-lock           Disable cross-axis deadband (allow raw 2D diagonal)\n");
     printf("      --no-scroll-counter-drift Allow cursor to move freely during scroll\n");
 }
 
@@ -107,6 +112,8 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             cfg->tap.anti_drift_enabled = 0;
         } else if (strcmp(argv[i], "--no-scroll") == 0) {
             cfg->scroll.enabled = 0;
+        } else if (strcmp(argv[i], "--linear-scroll") == 0) {
+            cfg->scroll.progressive_enabled = 0;
         } else if (strcmp(argv[i], "--no-axis-lock") == 0) {
             cfg->scroll.axis_lock_enabled = 0;
         } else if (strcmp(argv[i], "--no-scroll-counter-drift") == 0) {
@@ -171,8 +178,13 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             }
             cfg->tap.drag_release_grace_ms = (uint32_t)val;
         } else if (strcmp(argv[i], "--scroll-speed") == 0) {
-            if (i + 1 >= argc || parse_int_arg(argv[++i], 1, 120, &cfg->scroll.hires_multiplier) < 0) {
-                fprintf(stderr, "Error: Invalid --scroll-speed value (must be 1..120)\n");
+            if (i + 1 >= argc || parse_int_arg(argv[++i], 1, 60, &cfg->scroll.hires_multiplier) < 0) {
+                fprintf(stderr, "Error: Invalid --scroll-speed value (must be 1..60)\n");
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--scroll-accel") == 0) {
+            if (i + 1 >= argc || parse_int_arg(argv[++i], 0, 20, &cfg->scroll.accel_factor) < 0) {
+                fprintf(stderr, "Error: Invalid --scroll-accel value (must be 0..20)\n");
                 return -1;
             }
         } else {

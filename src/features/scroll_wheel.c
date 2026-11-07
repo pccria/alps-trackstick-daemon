@@ -1,6 +1,6 @@
 /**
  * @file scroll_wheel.c
- * @brief Implementation of the 2D kinetic trackstick scroll wheel state machine.
+ * @brief Implementation of the 2D kinetic trackstick scroll wheel state machine with progressive ballistics.
  */
 
 #include "features/scroll_wheel.h"
@@ -19,6 +19,46 @@ void alps_scroll_wheel_reset(alps_scroll_wheel_t *ctx) {
 
 int alps_scroll_wheel_is_engaged(const alps_scroll_wheel_t *ctx) {
     return (ctx && ctx->state == ALPS_SCROLL_STATE_ENGAGED) ? 1 : 0;
+}
+
+/**
+ * @brief Computes high-resolution wheel ticks from directional deflection using
+ *        a dual-range progressive ballistics curve.
+ *
+ * Curve behavior:
+ * - Low deflection (|step| <= 2): Linear scaling at base_mult units/count for
+ *   sub-notch reading precision (12-24 units = 10-20% of a notch).
+ * - Moderate-to-firm deflection (|step| >= 3): Progressive quadratic boost
+ *   allowing effortless high-speed navigation across thousands of lines.
+ *
+ * @param step         Signed deflection counts along an axis.
+ * @param base_mult    Base multiplier for low-deflection micro-stepping.
+ * @param progressive  Non-zero to enable progressive non-linear acceleration.
+ * @param accel_factor Quadratic acceleration coefficient.
+ * @return Signed high-resolution wheel units (120 units = 1 detent notch).
+ */
+static int32_t compute_ballistics(int32_t step, int base_mult, int progressive, int accel_factor) {
+    if (step == 0) return 0;
+
+    int32_t sign = step < 0 ? -1 : 1;
+    int32_t mag = step < 0 ? -step : step;
+
+    if (mag > 100) mag = 100;
+
+    int32_t hires = mag * base_mult;
+
+    if (progressive && mag > 2 && accel_factor > 0) {
+        int32_t excess = mag - 2;
+        int32_t boost = (excess * excess * accel_factor) / 4;
+        hires += boost;
+    }
+
+    /* Saturation ceiling: max 1200 units (10 full notches) per frame */
+    if (hires > 1200) {
+        hires = 1200;
+    }
+
+    return sign * hires;
 }
 
 alps_action_t alps_scroll_wheel_process_frame(alps_scroll_wheel_t *ctx,
@@ -76,9 +116,11 @@ alps_action_t alps_scroll_wheel_process_frame(alps_scroll_wheel_t *ctx,
         act.drift_y = -dy;
     }
 
-    /* Continuous High-Resolution Wheel (120 units = 1 notch) */
-    act.wheel_v_hires = v_step * cfg->hires_multiplier;
-    act.wheel_h_hires = h_step * cfg->hires_multiplier;
+    /* Continuous High-Resolution Wheel with Progressive Ballistics (120 units = 1 notch) */
+    act.wheel_v_hires = compute_ballistics(v_step, cfg->hires_multiplier,
+                                           cfg->progressive_enabled, cfg->accel_factor);
+    act.wheel_h_hires = compute_ballistics(h_step, cfg->hires_multiplier,
+                                           cfg->progressive_enabled, cfg->accel_factor);
 
     /* Discrete Legacy Detents */
     ctx->acc_v_hires += act.wheel_v_hires;
