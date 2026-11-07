@@ -24,6 +24,7 @@ ProtectKernelLogs=true
 ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
+ProtectProc=invisible
 NoNewPrivileges=true
 PrivateNetwork=true
 IPAddressDeny=any
@@ -34,6 +35,9 @@ RestrictSUIDSGID=true
 RestrictNamespaces=true
 RestrictRealtime=false
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
+CapabilityBoundingSet=CAP_SYS_NICE
+AmbientCapabilities=
+UMask=0077
 
 # Hardware Device Permissions
 DevicePolicy=closed
