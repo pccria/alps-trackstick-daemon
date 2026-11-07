@@ -4,7 +4,7 @@ After=systemd-udevd.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/alps-stick --speed 0.8
+ExecStart=/usr/local/bin/alps-stick
 Restart=always
 RestartSec=3
 

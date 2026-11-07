@@ -17,7 +17,7 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-#define DAEMON_VERSION               "0.3.1"
+#define DAEMON_VERSION               "0.3.2"
 
 /* --- Calibrated Transducer Thresholds (v2.2.0 Fine-Tuned) --- */
 #define TAP1_PRESSURE                28    /* Initial tap trigger: raised from 22 to eliminate accidental clicks while steering */
@@ -211,7 +211,7 @@ static void apply_pointer_speed(const char *dev_name, float speed) {
 
 int main(int argc, char *argv[]) {
     int verbose = 0;
-    float speed = 0.8f;
+    float speed = -999.0f; /* Unset by default: leave desktop environment / KDE settings completely untouched */
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
@@ -273,11 +273,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    apply_pointer_speed(dev_name, speed);
+    if (speed >= -1.0f && speed <= 1.0f) {
+        apply_pointer_speed(dev_name, speed);
+    }
 
     if (verbose) {
         printf("ALPS Native C Daemon v%s (Physical Transducer Engine)\n", DAEMON_VERSION);
         printf("Connected: %s (%s)\n", dev_name, dev_path);
+        if (speed >= -1.0f && speed <= 1.0f) {
+            printf("Pointer Speed Override: %.2f (Forced Adaptive Profile)\n", speed);
+        } else {
+            printf("Pointer Ballistics: Native (KDE/System acceleration profile untouched)\n");
+        }
         printf("Calibrated: TAP1_Z=%d, TAP2_Z=%d, RELEASE_Z=%d, TAP1_MAX_MOTION=%d, DRAG_MOTION=%d, DRAG_GRACE=%dms\n",
                TAP1_PRESSURE, TAP2_REBOUND_PRESSURE, RELEASE_PRESSURE,
                MAX_TAP_MOTION, DRAG_START_MOTION, DRAG_RELEASE_GRACE_MS);
