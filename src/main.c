@@ -230,6 +230,11 @@ int main(int argc, char *argv[]) {
                 norm_ev.value = raw_events[i].value;
                 norm_ev.timestamp_ms = now;
                 recognized = 1;
+            } else if (raw_events[i].type == EV_SYN && raw_events[i].code == SYN_REPORT) {
+                norm_ev.type = ALPS_EV_SYN_REPORT;
+                norm_ev.value = 0;
+                norm_ev.timestamp_ms = now;
+                recognized = 1;
             }
 
             if (recognized) {
@@ -243,15 +248,19 @@ int main(int argc, char *argv[]) {
                         alps_emitter_dispatch(ufd, &tap_reset);
                     }
                 } else if (alps_scroll_wheel_is_engaged(&scroll_ctx)) {
-                    /* While scrolling is engaged, relative motion is converted to scroll events */
-                    if (norm_ev.type == ALPS_EV_REL_X || norm_ev.type == ALPS_EV_REL_Y) {
+                    /* While scrolling is engaged, pass motion and sync boundaries to the scroll module */
+                    if (norm_ev.type == ALPS_EV_REL_X ||
+                        norm_ev.type == ALPS_EV_REL_Y ||
+                        norm_ev.type == ALPS_EV_SYN_REPORT) {
                         alps_action_t act = alps_scroll_wheel_process_event(&scroll_ctx, &cfg.scroll, &norm_ev, cfg.verbose);
                         alps_emitter_dispatch(ufd, &act);
                     }
                 } else {
                     /* Normal pointer navigation / tap gesture */
-                    alps_action_t act = alps_tap_gesture_process_event(&tap_ctx, &cfg.tap, &norm_ev, cfg.verbose);
-                    alps_emitter_dispatch(ufd, &act);
+                    if (norm_ev.type != ALPS_EV_SYN_REPORT) {
+                        alps_action_t act = alps_tap_gesture_process_event(&tap_ctx, &cfg.tap, &norm_ev, cfg.verbose);
+                        alps_emitter_dispatch(ufd, &act);
+                    }
                 }
             }
         }

@@ -35,8 +35,8 @@
 /* --- Calibrated Default Scroll Parameters --- */
 #define ALPS_DEFAULT_SCROLL_ENABLED          1     /**< Middle-button scrolling enabled by default */
 #define ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER 15    /**< High-res units per deflection count (8 counts = 1 notch = 120 units) */
-#define ALPS_DEFAULT_SCROLL_DEADBAND_COUNTS  4     /**< Cross-axis deadband counts before unlocking 2D diagonal */
-#define ALPS_DEFAULT_SCROLL_AXIS_LOCK        1     /**< Dominant axis lock enabled by default to prevent lateral drift */
+#define ALPS_DEFAULT_SCROLL_DOMINANCE_RATIO  2     /**< Axis dominance ratio (2:1) for vector cone tremor rejection */
+#define ALPS_DEFAULT_SCROLL_AXIS_LOCK        1     /**< Vector cone deadband enabled by default to prevent lateral drift */
 #define ALPS_DEFAULT_SCROLL_COUNTER_DRIFT    1     /**< Snap cursor back with (-dx, -dy) during scroll frames */
 
 /**
@@ -66,8 +66,8 @@ typedef struct {
 typedef struct {
     int enabled;                     /**< 1 to enable middle-button scrolling, 0 to disable */
     int hires_multiplier;            /**< High-res scroll units per motion count (default: 15) */
-    int deadband_counts;             /**< Cross-axis deadband threshold before unlocking diagonal (default: 4) */
-    int axis_lock_enabled;           /**< 1 to enforce primary-axis lock deadband, 0 for free diagonal */
+    int dominance_ratio;             /**< Dominance ratio (e.g. 2 for 2:1) for vector cone filtering */
+    int axis_lock_enabled;           /**< 1 to enforce transient vector cone filtering, 0 for raw unconstrained 2D */
     int counter_drift_enabled;       /**< 1 to counteract cursor displacement with (-dx, -dy) during scroll */
 } alps_scroll_config_t;
 

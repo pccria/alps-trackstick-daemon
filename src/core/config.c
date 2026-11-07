@@ -36,7 +36,7 @@ void alps_config_init_defaults(alps_config_t *cfg) {
     /* 2D Kinetic Scroll feature defaults */
     cfg->scroll.enabled               = ALPS_DEFAULT_SCROLL_ENABLED;
     cfg->scroll.hires_multiplier      = ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER;
-    cfg->scroll.deadband_counts       = ALPS_DEFAULT_SCROLL_DEADBAND_COUNTS;
+    cfg->scroll.dominance_ratio       = ALPS_DEFAULT_SCROLL_DOMINANCE_RATIO;
     cfg->scroll.axis_lock_enabled     = ALPS_DEFAULT_SCROLL_AXIS_LOCK;
     cfg->scroll.counter_drift_enabled = ALPS_DEFAULT_SCROLL_COUNTER_DRIFT;
 }
