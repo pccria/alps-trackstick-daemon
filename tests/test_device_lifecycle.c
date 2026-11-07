@@ -137,6 +137,20 @@ static void test_device_monitor_invalid_fd_safety(void) {
     printf("  [PASS] test_device_monitor_invalid_fd_safety\n");
 }
 
+static void test_systemd_service_helpers(void) {
+    /* Null / safety checks */
+    assert(alps_systemd_is_active(NULL) == 0);
+    assert(alps_systemd_restart(NULL) == -1);
+
+    /* Non-existent service should return 0 (inactive) */
+    assert(alps_systemd_is_active("non_existent_alps_unit_99999") == 0);
+
+    /* Non-existent service restart should fail cleanly */
+    assert(alps_systemd_restart("non_existent_alps_unit_99999") != 0);
+
+    printf("  [PASS] test_systemd_service_helpers\n");
+}
+
 int main(void) {
     printf("Running ALPS Trackstick Device Lifecycle Unit Tests (v%s)...\n", ALPS_DAEMON_VERSION);
     test_device_monitor_lifecycle();
@@ -144,6 +158,7 @@ int main(void) {
     test_device_disconnect_active_drag_release();
     test_device_disconnect_scroll_reset();
     test_device_monitor_invalid_fd_safety();
-    printf("All 5 device lifecycle test suites passed!\n");
+    test_systemd_service_helpers();
+    printf("All 6 device lifecycle test suites passed!\n");
     return 0;
 }

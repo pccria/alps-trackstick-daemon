@@ -862,8 +862,7 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         int res = alps_calibrate_save_config(target_config_path, &prof);
         if (res == 0) {
             printf("\n✓ Successfully updated %s!\n", target_config_path);
-            printf("To activate the new calibration immediately, run:\n");
-            printf("  sudo systemctl restart alps-stick\n\n");
+            alps_service_offer_restart("alps-stick", 0);
         } else if (res == -2) {
             printf("\nNotice: Permission denied writing directly to %s.\n", target_config_path);
             const char *fallback_path = "/tmp/alps-stick.conf";
@@ -883,8 +882,7 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         int rst_res = alps_config_reset_file(target_config_path);
         if (rst_res == 0) {
             printf("\n✓ Successfully restored %s to factory defaults!\n", target_config_path);
-            printf("To activate defaults immediately, run:\n");
-            printf("  sudo systemctl restart alps-stick\n\n");
+            alps_service_offer_restart("alps-stick", 0);
         } else if (rst_res == -2) {
             printf("\nNotice: Permission denied writing directly to %s.\n", target_config_path);
             const char *fallback_path = "/tmp/alps-stick.conf";

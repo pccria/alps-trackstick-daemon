@@ -65,4 +65,36 @@ int alps_device_monitor_drain(int inotify_fd);
  */
 void alps_device_monitor_destroy(int inotify_fd);
 
+/**
+ * @brief Checks if a named systemd service is currently active and running.
+ *
+ * Invokes `systemctl is-active --quiet <service_name>` safely via `fork()` + `execv()`.
+ *
+ * @param service_name Name of the service (e.g. "alps-stick").
+ * @return 1 if active, 0 if inactive or not found, -1 if systemctl is unavailable.
+ */
+int alps_systemd_is_active(const char *service_name);
+
+/**
+ * @brief Restarts a named systemd service.
+ *
+ * Invokes `systemctl restart <service_name>` safely via `fork()` + `execv()`.
+ *
+ * @param service_name Name of the service (e.g. "alps-stick").
+ * @return 0 on success, non-zero on error.
+ */
+int alps_systemd_restart(const char *service_name);
+
+/**
+ * @brief Interactively prompts to restart the daemon service to apply changes.
+ *
+ * Checks if the service is currently running. If active, prompts the user
+ * `Restart <service> service now to apply changes? [Y/n]: `.
+ * If confirmed or if `force` is non-zero, executes `systemctl restart`.
+ *
+ * @param service_name Name of the service (e.g. "alps-stick").
+ * @param force        Non-zero to skip confirmation and restart immediately if active.
+ */
+void alps_service_offer_restart(const char *service_name, int force);
+
 #endif /* ALPS_IO_DEVICE_H */

@@ -186,8 +186,7 @@ int main(int argc, char *argv[]) {
         int rc = alps_config_reset_file(cfg.config_path);
         if (rc == 0) {
             printf("✓ Successfully restored '%s' to factory defaults.\n", cfg.config_path);
-            printf("To activate changes immediately, run:\n");
-            printf("  sudo systemctl restart alps-stick\n");
+            alps_service_offer_restart("alps-stick", cfg.force_mode);
             return 0;
         } else if (rc == -2) {
             fprintf(stderr, "Error: Permission denied writing to '%s'.\n", cfg.config_path);
