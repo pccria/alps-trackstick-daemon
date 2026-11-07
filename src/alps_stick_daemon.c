@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -15,13 +17,15 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
+#define DAEMON_VERSION        "1.1.0"
+
 /* --- Calibrated Thresholds --- */
 #define TAP_PRESSURE          24    /* Gentle touch threshold */
 #define RELEASE_PRESSURE      10    /* Baseline release pressure */
-#define MAX_TAP_DURATION_MS   180   /* Max bounce time for Tap 1 */
-#define MAX_TAP1_MOTION       6     /* Motion gate for Tap 1 (rejects steering) */
-#define DOUBLE_TAP_WINDOW_MS  350   /* Forgiving double-tap window */
-#define DRAG_RELEASE_GRACE_MS 120   /* Grace period: Bridges pressure dips during steering */
+#define MAX_TAP_DURATION_MS   220   /* Max bounce time for Tap 1 (forgiving for natural taps) */
+#define MAX_TAP1_MOTION       12    /* Motion gate for Tap 1 (allows natural contact shear while rejecting steering) */
+#define DOUBLE_TAP_WINDOW_MS  450   /* Generous double-tap window matching desktop double-click standards */
+#define DRAG_RELEASE_GRACE_MS 220   /* Grace period: Bridges pressure dips during steering reversal */
 #define MOTION_CAP            10000 /* Saturation cap to prevent integer overflow */
 
 typedef enum {
@@ -162,7 +166,7 @@ static void emit_up(int ufd) {
 
 static void emit_quick_click(int ufd) {
     emit_down(ufd);
-    usleep(15000);
+    usleep(5000); /* 5ms hold: distinct events in kernel queue without long epoll stall */
     emit_up(ufd);
 }
 
@@ -363,8 +367,8 @@ int main(int argc, char *argv[]) {
                 } else if (state == STATE_TAP2_DOWN) {
                     drag_motion = add_motion_saturated(drag_motion, evs[i].value);
                     last_active_time = now;
-                    /* Moving confirms deliberate drag */
-                    if (drag_motion >= 6) {
+                    /* Moving confirms deliberate drag once motion exceeds tap tremor */
+                    if (drag_motion > MAX_TAP1_MOTION) {
                         is_drag_locked = 1;
                     }
                 }
@@ -395,6 +399,12 @@ int main(int argc, char *argv[]) {
                         last_active_time = now;
                     }
                 }
+                /* --- HOLD: Resting pressure maintains drag even when stationary --- */
+                else if (val > RELEASE_PRESSURE) {
+                    if (state == STATE_TAP2_DOWN) {
+                        last_active_time = now;
+                    }
+                }
                 /* --- LIFT OFF / PRESSURE DIP --- */
                 else if (val <= RELEASE_PRESSURE) {
                     if (state == STATE_TAP1_DOWN) {
@@ -410,15 +420,25 @@ int main(int argc, char *argv[]) {
                     } else if (state == STATE_TAP2_DOWN) {
                         uint64_t hold_time = now >= press_time ? (now - press_time) : 0;
 
-                        /* Quick Double-Click release: Lifted off fast with no steering */
-                        if (!is_drag_locked && hold_time <= MAX_TAP_DURATION_MS && drag_motion < 6) {
+                        /* 
+                         * If no significant steering occurred, release immediately on lift-off.
+                         * This guarantees crisp double-clicks and stationary releases with zero latency.
+                         */
+                        if (drag_motion <= MAX_TAP1_MOTION) {
                             emit_up(ufd);
                             state = STATE_IDLE;
-                            if (verbose) printf("-> DOUBLE CLICK Completed!\n");
+                            is_drag_locked = 0;
+                            if (verbose) {
+                                if (hold_time <= MAX_TAP_DURATION_MS) {
+                                    printf("-> DOUBLE CLICK Completed!\n");
+                                } else {
+                                    printf("-> CLICK-AND-HOLD Released!\n");
+                                }
+                            }
                         } else {
                             /* 
-                             * Active Drag: Do NOT release on a momentary pressure dip!
-                             * Mark drag locked and let the 120ms silence timer handle it.
+                             * Active Drag: Arm grace window to bridge momentary pressure dips
+                             * during steering. Will release after DRAG_RELEASE_GRACE_MS of silence.
                              */
                             is_drag_locked = 1;
                         }
