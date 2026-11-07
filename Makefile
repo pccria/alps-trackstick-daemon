@@ -4,6 +4,7 @@ CFLAGS ?= -O2 -Wall -Wextra -Iinclude -D_GNU_SOURCE
 TARGET = bin/alps-stick
 TEST_TAP_TARGET = bin/test_tap_gesture
 TEST_SCROLL_TARGET = bin/test_scroll_wheel
+TEST_DEVICE_TARGET = bin/test_device_lifecycle
 
 DAEMON_SRCS = \
 	src/main.c \
@@ -22,6 +23,13 @@ TEST_SCROLL_SRCS = \
 	tests/test_scroll_wheel.c \
 	src/core/config.c \
 	src/features/scroll_wheel.c
+
+TEST_DEVICE_SRCS = \
+	tests/test_device_lifecycle.c \
+	src/core/config.c \
+	src/features/tap_gesture.c \
+	src/features/scroll_wheel.c \
+	src/io/device.c
 
 HEADERS = \
 	include/core/event.h \
@@ -52,9 +60,14 @@ $(TEST_SCROLL_TARGET): $(TEST_SCROLL_SRCS) $(HEADERS)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -o $@ $(TEST_SCROLL_SRCS)
 
-test: $(TEST_TAP_TARGET) $(TEST_SCROLL_TARGET)
+$(TEST_DEVICE_TARGET): $(TEST_DEVICE_SRCS) $(HEADERS)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -o $@ $(TEST_DEVICE_SRCS)
+
+test: $(TEST_TAP_TARGET) $(TEST_SCROLL_TARGET) $(TEST_DEVICE_TARGET)
 	./$(TEST_TAP_TARGET)
 	./$(TEST_SCROLL_TARGET)
+	./$(TEST_DEVICE_TARGET)
 
 sanitize: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g
 sanitize: clean all test

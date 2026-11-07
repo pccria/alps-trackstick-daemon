@@ -40,4 +40,29 @@ int alps_device_find_stick(char *out_path, size_t path_max,
  */
 void alps_device_apply_pointer_speed(const char *dev_name, float speed);
 
+/**
+ * @brief Creates an inotify file descriptor monitoring `/dev/input` for device nodes.
+ *
+ * Used for instant, event-driven hardware re-acquisition across system suspend/resume
+ * and hotplug cycles without busy polling.
+ *
+ * @return Inotify file descriptor (`>= 0`) with `O_NONBLOCK` and `O_CLOEXEC` set, or `-1` on failure.
+ */
+int alps_device_monitor_create(void);
+
+/**
+ * @brief Reads and discards pending inotify events to clear the edge-triggered buffer.
+ *
+ * @param inotify_fd Valid inotify file descriptor created by alps_device_monitor_create().
+ * @return Number of events drained, or `-1` on error.
+ */
+int alps_device_monitor_drain(int inotify_fd);
+
+/**
+ * @brief Closes an inotify file descriptor created by alps_device_monitor_create().
+ *
+ * @param inotify_fd File descriptor to close.
+ */
+void alps_device_monitor_destroy(int inotify_fd);
+
 #endif /* ALPS_IO_DEVICE_H */

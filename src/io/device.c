@@ -13,8 +13,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <errno.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <sys/inotify.h>
 #include <linux/input.h>
 
 int alps_device_find_stick(char *out_path, size_t path_max,
@@ -94,4 +96,41 @@ void alps_device_apply_pointer_speed(const char *dev_name, float speed) {
         "xinput", "set-prop", (char *)dev_name, "libinput Accel Profile Enabled", "1", "0", NULL
     };
     run_xinput_cmd(args_profile);
+}
+
+int alps_device_monitor_create(void) {
+    int ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (ifd < 0) return -1;
+
+    int wd = inotify_add_watch(ifd, "/dev/input", IN_CREATE | IN_ATTRIB);
+    if (wd < 0) {
+        close(ifd);
+        return -1;
+    }
+    return ifd;
+}
+
+int alps_device_monitor_drain(int inotify_fd) {
+    if (inotify_fd < 0) return -1;
+
+    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+    int count = 0;
+
+    while (1) {
+        ssize_t len = read(inotify_fd, buf, sizeof(buf));
+        if (len < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (len == 0) break;
+        count++;
+    }
+    return count;
+}
+
+void alps_device_monitor_destroy(int inotify_fd) {
+    if (inotify_fd >= 0) {
+        close(inotify_fd);
+    }
 }
