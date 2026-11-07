@@ -19,7 +19,8 @@
 typedef enum {
     ALPS_EV_REL_X = 0,   /**< Lateral horizontal deflection (X-axis strain) */
     ALPS_EV_REL_Y,       /**< Lateral vertical deflection (Y-axis strain) */
-    ALPS_EV_PRESSURE     /**< Vertical downward force on the cap (Z-axis pressure) */
+    ALPS_EV_PRESSURE,    /**< Vertical downward force on the cap (Z-axis pressure) */
+    ALPS_EV_BTN_MIDDLE   /**< Physical trackstick middle button state (1=down, 0=up) */
 } alps_event_type_t;
 
 /**

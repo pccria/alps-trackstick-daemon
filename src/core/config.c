@@ -16,6 +16,7 @@ void alps_config_init_defaults(alps_config_t *cfg) {
     cfg->verbose = 0;
     cfg->pointer_speed = ALPS_POINTER_SPEED_UNSET;
 
+    /* Tap / Drag feature defaults */
     cfg->tap.tap1_pressure          = ALPS_DEFAULT_TAP1_PRESSURE;
     cfg->tap.tap2_rebound_pressure  = ALPS_DEFAULT_TAP2_REBOUND_PRESSURE;
     cfg->tap.release_pressure       = ALPS_DEFAULT_RELEASE_PRESSURE;
@@ -31,6 +32,13 @@ void alps_config_init_defaults(alps_config_t *cfg) {
     cfg->tap.pre_motion_limit       = ALPS_DEFAULT_PRE_MOTION_LIMIT;
     cfg->tap.motion_cap             = ALPS_DEFAULT_MOTION_CAP;
     cfg->tap.anti_drift_enabled     = 1;
+
+    /* 2D Kinetic Scroll feature defaults */
+    cfg->scroll.enabled               = ALPS_DEFAULT_SCROLL_ENABLED;
+    cfg->scroll.hires_multiplier      = ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER;
+    cfg->scroll.deadband_counts       = ALPS_DEFAULT_SCROLL_DEADBAND_COUNTS;
+    cfg->scroll.axis_lock_enabled     = ALPS_DEFAULT_SCROLL_AXIS_LOCK;
+    cfg->scroll.counter_drift_enabled = ALPS_DEFAULT_SCROLL_COUNTER_DRIFT;
 }
 
 /**
@@ -74,7 +82,13 @@ void alps_config_print_help(const char *prog_name) {
            ALPS_DEFAULT_DRAG_START_MOTION);
     printf("      --drag-grace <ms>        Inactivity grace before dropping drag (default: %u ms)\n",
            ALPS_DEFAULT_DRAG_RELEASE_GRACE_MS);
-    printf("      --no-anti-drift          Disable reverse contact-shear snap on tap release\n");
+    printf("      --no-anti-drift          Disable reverse contact-shear snap on tap release\n\n");
+    printf("2D Kinetic Scroll Options:\n");
+    printf("      --no-scroll              Disable middle-button trackstick scrolling\n");
+    printf("      --scroll-speed <mult>    Hi-res units per count [1..120] (default: %d)\n",
+           ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER);
+    printf("      --no-axis-lock           Disable cross-axis deadband (allow free 2D diagonal)\n");
+    printf("      --no-scroll-counter-drift Allow cursor to move freely during scroll\n");
 }
 
 int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
@@ -91,6 +105,12 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             return 1;
         } else if (strcmp(argv[i], "--no-anti-drift") == 0) {
             cfg->tap.anti_drift_enabled = 0;
+        } else if (strcmp(argv[i], "--no-scroll") == 0) {
+            cfg->scroll.enabled = 0;
+        } else if (strcmp(argv[i], "--no-axis-lock") == 0) {
+            cfg->scroll.axis_lock_enabled = 0;
+        } else if (strcmp(argv[i], "--no-scroll-counter-drift") == 0) {
+            cfg->scroll.counter_drift_enabled = 0;
         } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--speed") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: Missing value for %s\n", argv[i]);
@@ -150,6 +170,11 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
                 return -1;
             }
             cfg->tap.drag_release_grace_ms = (uint32_t)val;
+        } else if (strcmp(argv[i], "--scroll-speed") == 0) {
+            if (i + 1 >= argc || parse_int_arg(argv[++i], 1, 120, &cfg->scroll.hires_multiplier) < 0) {
+                fprintf(stderr, "Error: Invalid --scroll-speed value (must be 1..120)\n");
+                return -1;
+            }
         } else {
             fprintf(stderr, "Error: Unknown option '%s' (see --help)\n", argv[i]);
             return -1;

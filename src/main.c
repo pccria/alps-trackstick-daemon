@@ -9,7 +9,7 @@
  * 3. Multiplex raw kernel input events via `epoll_wait` with dynamic timeouts
  *    queried from active feature modules.
  * 4. Normalize raw `struct input_event` packets into `alps_event_t` structs
- *    and route them through the feature pipeline (`alps_tap_gesture_process_event`).
+ *    and route them through the feature pipeline (`tap_gesture` and `scroll_wheel`).
  * 5. Guarantee clean virtual button release (`alps_tap_gesture_reset`) on
  *    `SIGINT`/`SIGTERM` or device disconnect.
  */
@@ -33,6 +33,7 @@
 #include "core/event.h"
 #include "core/action.h"
 #include "features/tap_gesture.h"
+#include "features/scroll_wheel.h"
 #include "io/device.h"
 #include "io/emitter.h"
 
@@ -127,7 +128,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (cfg.verbose) {
-        printf("ALPS Native C Daemon v%s (Modular Anti-Drift Transducer Engine)\n",
+        printf("ALPS Native C Daemon v%s (Modular 2D Kinetic Transducer Engine)\n",
                ALPS_DAEMON_VERSION);
         printf("Connected: %s (%s)\n", dev_name, dev_path);
         if (cfg.pointer_speed >= -1.0f && cfg.pointer_speed <= 1.0f) {
@@ -135,16 +136,27 @@ int main(int argc, char *argv[]) {
         } else {
             printf("Pointer Ballistics: Native (KDE/System acceleration profile untouched)\n");
         }
-        printf("Calibrated: TAP1_Z=%d, TAP2_Z=%d, RELEASE_Z=%d, TAP1_MAX_MOTION=%d, "
+        printf("Tap Calibration: TAP1_Z=%d, TAP2_Z=%d, RELEASE_Z=%d, TAP1_MAX_MOTION=%d, "
                "DRAG_MOTION=%d, DRAG_GRACE=%ums, ANTI_DRIFT=%s\n",
                cfg.tap.tap1_pressure, cfg.tap.tap2_rebound_pressure, cfg.tap.release_pressure,
                cfg.tap.max_tap_motion, cfg.tap.drag_start_motion, cfg.tap.drag_release_grace_ms,
                cfg.tap.anti_drift_enabled ? "ON" : "OFF");
+        if (cfg.scroll.enabled) {
+            printf("2D Kinetic Scroll: Enabled (Middle-Button Hold, Hi-Res Multiplier=%d, Axis-Lock=%s, Counter-Drift=%s)\n",
+                   cfg.scroll.hires_multiplier,
+                   cfg.scroll.axis_lock_enabled ? "ON" : "OFF",
+                   cfg.scroll.counter_drift_enabled ? "ON" : "OFF");
+        } else {
+            printf("2D Kinetic Scroll: Disabled\n");
+        }
         fflush(stdout);
     }
 
     alps_tap_gesture_t tap_ctx;
     alps_tap_gesture_init(&tap_ctx);
+
+    alps_scroll_wheel_t scroll_ctx;
+    alps_scroll_wheel_init(&scroll_ctx);
 
     struct input_event raw_events[64];
 
@@ -213,11 +225,34 @@ int main(int argc, char *argv[]) {
                 norm_ev.value = raw_events[i].value;
                 norm_ev.timestamp_ms = now;
                 recognized = 1;
+            } else if (raw_events[i].type == EV_KEY && raw_events[i].code == BTN_MIDDLE) {
+                norm_ev.type = ALPS_EV_BTN_MIDDLE;
+                norm_ev.value = raw_events[i].value;
+                norm_ev.timestamp_ms = now;
+                recognized = 1;
             }
 
             if (recognized) {
-                alps_action_t act = alps_tap_gesture_process_event(&tap_ctx, &cfg.tap, &norm_ev, cfg.verbose);
-                alps_emitter_dispatch(ufd, &act);
+                if (norm_ev.type == ALPS_EV_BTN_MIDDLE) {
+                    alps_action_t act = alps_scroll_wheel_process_event(&scroll_ctx, &cfg.scroll, &norm_ev, cfg.verbose);
+                    alps_emitter_dispatch(ufd, &act);
+
+                    if (alps_scroll_wheel_is_engaged(&scroll_ctx)) {
+                        /* Reset tap gesture so middle-click doesn't leave an active tap state */
+                        alps_action_t tap_reset = alps_tap_gesture_reset(&tap_ctx);
+                        alps_emitter_dispatch(ufd, &tap_reset);
+                    }
+                } else if (alps_scroll_wheel_is_engaged(&scroll_ctx)) {
+                    /* While scrolling is engaged, relative motion is converted to scroll events */
+                    if (norm_ev.type == ALPS_EV_REL_X || norm_ev.type == ALPS_EV_REL_Y) {
+                        alps_action_t act = alps_scroll_wheel_process_event(&scroll_ctx, &cfg.scroll, &norm_ev, cfg.verbose);
+                        alps_emitter_dispatch(ufd, &act);
+                    }
+                } else {
+                    /* Normal pointer navigation / tap gesture */
+                    alps_action_t act = alps_tap_gesture_process_event(&tap_ctx, &cfg.tap, &norm_ev, cfg.verbose);
+                    alps_emitter_dispatch(ufd, &act);
+                }
             }
         }
     }
@@ -225,6 +260,7 @@ int main(int argc, char *argv[]) {
     /* Guarantee virtual mouse button is released on exit */
     alps_action_t cleanup_act = alps_tap_gesture_reset(&tap_ctx);
     alps_emitter_dispatch(ufd, &cleanup_act);
+    alps_scroll_wheel_reset(&scroll_ctx);
 
     alps_emitter_destroy(ufd);
     close(stick_fd);

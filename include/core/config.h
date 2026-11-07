@@ -2,9 +2,9 @@
  * @file config.h
  * @brief Runtime configuration structures, calibrated defaults, and CLI parser API.
  *
- * Centralizes all physical transducer thresholds so they can be inspected,
- * tuned at runtime via command-line flags without recompiling, or passed into
- * unit tests with custom synthetic parameters.
+ * Centralizes all physical transducer thresholds and scroll parameters so they
+ * can be inspected, tuned at runtime via command-line flags without recompiling,
+ * or passed into unit tests with custom synthetic parameters.
  */
 
 #ifndef ALPS_CORE_CONFIG_H
@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 /** @brief Daemon semantic version string. */
-#define ALPS_DAEMON_VERSION                  "0.6.0"
+#define ALPS_DAEMON_VERSION                  "0.7.0"
 
 /* --- Calibrated Default Transducer Thresholds --- */
 #define ALPS_DEFAULT_TAP1_PRESSURE           22    /**< Smooth, feather-light activation floor for Tap 1 */
@@ -31,6 +31,13 @@
 #define ALPS_DEFAULT_PRE_MOTION_LIMIT        10    /**< Accumulated motion in window that classifies spikes as steering */
 #define ALPS_DEFAULT_MOTION_CAP              10000 /**< Saturation ceiling for motion accumulators */
 #define ALPS_POINTER_SPEED_UNSET             (-999.0f) /**< Sentinel indicating native OS ballistics are preserved */
+
+/* --- Calibrated Default Scroll Parameters --- */
+#define ALPS_DEFAULT_SCROLL_ENABLED          1     /**< Middle-button scrolling enabled by default */
+#define ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER 15    /**< High-res units per deflection count (8 counts = 1 notch = 120 units) */
+#define ALPS_DEFAULT_SCROLL_DEADBAND_COUNTS  4     /**< Cross-axis deadband counts before unlocking 2D diagonal */
+#define ALPS_DEFAULT_SCROLL_AXIS_LOCK        1     /**< Dominant axis lock enabled by default to prevent lateral drift */
+#define ALPS_DEFAULT_SCROLL_COUNTER_DRIFT    1     /**< Snap cursor back with (-dx, -dy) during scroll frames */
 
 /**
  * @brief Tunable parameters for the tap, double-click, and drag transducer.
@@ -54,12 +61,24 @@ typedef struct {
 } alps_tap_config_t;
 
 /**
+ * @brief Tunable parameters for 2D kinetic trackstick scrolling.
+ */
+typedef struct {
+    int enabled;                     /**< 1 to enable middle-button scrolling, 0 to disable */
+    int hires_multiplier;            /**< High-res scroll units per motion count (default: 15) */
+    int deadband_counts;             /**< Cross-axis deadband threshold before unlocking diagonal (default: 4) */
+    int axis_lock_enabled;           /**< 1 to enforce primary-axis lock deadband, 0 for free diagonal */
+    int counter_drift_enabled;       /**< 1 to counteract cursor displacement with (-dx, -dy) during scroll */
+} alps_scroll_config_t;
+
+/**
  * @brief Top-level daemon configuration container.
  */
 typedef struct {
     int verbose;                     /**< Enable live gesture telemetry and state transition logging */
     float pointer_speed;             /**< Optional xinput accel speed [-1.0, 1.0], or ALPS_POINTER_SPEED_UNSET */
     alps_tap_config_t tap;           /**< Tap, double-click, and drag feature configuration */
+    alps_scroll_config_t scroll;     /**< 2D kinetic scrolling feature configuration */
 } alps_config_t;
 
 /**
