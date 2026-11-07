@@ -1,12 +1,52 @@
 [Unit]
 Description=ALPS DualPoint Stick Native C Gesture Daemon
+Documentation=https://github.com/pccria/alps-trackstick-daemon
 After=systemd-udevd.service
+Wants=systemd-udevd.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/alps-stick
 Restart=always
-RestartSec=3
+RestartSec=2
+
+# Real-Time Scheduling Priority (ensures sub-millisecond tap response under 100% CPU load)
+Nice=-20
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=50
+
+# Security & Sandbox Hardening
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+NoNewPrivileges=true
+PrivateNetwork=true
+IPAddressDeny=any
+PrivateTmp=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=false
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+# Hardware Device Permissions
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+DeviceAllow=char-input rw
+
+# System Call Filtering
+SystemCallFilter=@system-service
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap
+
+# Logging
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

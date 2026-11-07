@@ -88,6 +88,7 @@ clean:
 install: $(TARGET)
 	install -D -m 755 $(TARGET) $(INSTALL_BIN)
 	install -D -m 644 $(SERVICE) $(INSTALL_SERVICE)
+	@test -f /etc/alps-stick.conf || install -D -m 644 alps-stick.conf.example /etc/alps-stick.conf
 	systemctl daemon-reload
 	systemctl enable --now $(SERVICE)
 
