@@ -6,12 +6,14 @@ TEST_TAP_TARGET = bin/test_tap_gesture
 TEST_SCROLL_TARGET = bin/test_scroll_wheel
 TEST_DEVICE_TARGET = bin/test_device_lifecycle
 TEST_CONFIG_TARGET = bin/test_config_file
+TEST_CALIBRATE_TARGET = bin/test_calibrate
 
 DAEMON_SRCS = \
 	src/main.c \
 	src/core/config.c \
 	src/features/tap_gesture.c \
 	src/features/scroll_wheel.c \
+	src/features/calibrate.c \
 	src/io/device.c \
 	src/io/emitter.c
 
@@ -36,12 +38,19 @@ TEST_CONFIG_SRCS = \
 	tests/test_config_file.c \
 	src/core/config.c
 
+TEST_CALIBRATE_SRCS = \
+	tests/test_calibrate.c \
+	src/core/config.c \
+	src/features/calibrate.c \
+	src/io/device.c
+
 HEADERS = \
 	include/core/event.h \
 	include/core/action.h \
 	include/core/config.h \
 	include/features/tap_gesture.h \
 	include/features/scroll_wheel.h \
+	include/features/calibrate.h \
 	include/io/device.h \
 	include/io/emitter.h
 
@@ -73,11 +82,16 @@ $(TEST_CONFIG_TARGET): $(TEST_CONFIG_SRCS) $(HEADERS)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -o $@ $(TEST_CONFIG_SRCS)
 
-test: $(TEST_TAP_TARGET) $(TEST_SCROLL_TARGET) $(TEST_DEVICE_TARGET) $(TEST_CONFIG_TARGET)
+$(TEST_CALIBRATE_TARGET): $(TEST_CALIBRATE_SRCS) $(HEADERS)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -o $@ $(TEST_CALIBRATE_SRCS)
+
+test: $(TEST_TAP_TARGET) $(TEST_SCROLL_TARGET) $(TEST_DEVICE_TARGET) $(TEST_CONFIG_TARGET) $(TEST_CALIBRATE_TARGET)
 	./$(TEST_TAP_TARGET)
 	./$(TEST_SCROLL_TARGET)
 	./$(TEST_DEVICE_TARGET)
 	./$(TEST_CONFIG_TARGET)
+	./$(TEST_CALIBRATE_TARGET)
 
 sanitize: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g
 sanitize: clean all test

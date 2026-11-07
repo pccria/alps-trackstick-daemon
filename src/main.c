@@ -35,6 +35,7 @@
 #include "core/action.h"
 #include "features/tap_gesture.h"
 #include "features/scroll_wheel.h"
+#include "features/calibrate.h"
 #include "io/device.h"
 #include "io/emitter.h"
 
@@ -167,6 +168,10 @@ int main(int argc, char *argv[]) {
     }
     if (parse_rc < 0) {
         return 1;
+    }
+
+    if (cfg.calibrate_mode) {
+        return alps_calibrate_run(&cfg);
     }
 
     if (setup_signals() < 0) {

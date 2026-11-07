@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 /** @brief Daemon semantic version string. */
-#define ALPS_DAEMON_VERSION                  "0.8.0"
+#define ALPS_DAEMON_VERSION                  "0.9.0"
 
 /* --- Calibrated Default Transducer Thresholds --- */
 #define ALPS_DEFAULT_TAP1_PRESSURE           22    /**< Smooth, feather-light activation floor for Tap 1 */
@@ -81,6 +81,7 @@ typedef struct {
  */
 typedef struct {
     int verbose;                     /**< Enable live gesture telemetry and state transition logging */
+    int calibrate_mode;              /**< Non-zero to enter interactive calibration terminal wizard */
     char config_path[512];           /**< Path to configuration file (default: /etc/alps-stick.conf) */
     int explicit_config;             /**< Non-zero if config_path was explicitly set via CLI */
     float pointer_speed;             /**< Optional xinput accel speed [-1.0, 1.0], or ALPS_POINTER_SPEED_UNSET */

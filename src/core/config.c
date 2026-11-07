@@ -16,6 +16,7 @@ void alps_config_init_defaults(alps_config_t *cfg) {
     if (!cfg) return;
 
     cfg->verbose = 0;
+    cfg->calibrate_mode = 0;
     snprintf(cfg->config_path, sizeof(cfg->config_path), "%s", ALPS_DEFAULT_CONFIG_PATH);
     cfg->explicit_config = 0;
     cfg->pointer_speed = ALPS_POINTER_SPEED_UNSET;
@@ -223,6 +224,7 @@ void alps_config_print_help(const char *prog_name) {
     printf("General Options:\n");
     printf("  -c, --config <path>          Path to configuration file (default: %s)\n",
            ALPS_DEFAULT_CONFIG_PATH);
+    printf("  -C, --calibrate              Launch interactive terminal force calibration wizard\n");
     printf("  -v, --verbose                Enable live gesture telemetry and state logging\n");
     printf("  -s, --speed <float>          Override libinput pointer speed [-1.0 to 1.0]\n");
     printf("                               (Default: unset — preserves native OS/KDE settings)\n");
@@ -268,6 +270,8 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             }
             snprintf(cfg->config_path, sizeof(cfg->config_path), "%s", argv[++i]);
             cfg->explicit_config = 1;
+        } else if (strcmp(argv[i], "-C") == 0 || strcmp(argv[i], "--calibrate") == 0) {
+            cfg->calibrate_mode = 1;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             cfg->verbose = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
