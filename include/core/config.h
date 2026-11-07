@@ -82,6 +82,7 @@ typedef struct {
 typedef struct {
     int verbose;                     /**< Enable live gesture telemetry and state transition logging */
     int calibrate_mode;              /**< Non-zero to enter interactive calibration terminal wizard */
+    int interactive_mode;            /**< Non-zero to launch the interactive terminal Control Center */
     int reset_config_mode;           /**< Non-zero to reset configuration file to factory defaults */
     int force_mode;                  /**< Non-zero to bypass interactive confirmation prompts */
     char config_path[512];           /**< Path to configuration file (default: /etc/alps-stick.conf) */

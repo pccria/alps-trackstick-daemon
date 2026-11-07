@@ -1,6 +1,6 @@
 /**
  * @file calibrate.c
- * @brief Implementation of guided 4-phase physical calibration and force telemetry.
+ * @brief Implementation of guided 4-phase physical calibration and interactive Control Center.
  */
 
 #ifndef _GNU_SOURCE
@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/epoll.h>
+#include <sys/wait.h>
 #include <linux/input.h>
 
 static volatile sig_atomic_t g_cal_running = 1;
@@ -36,14 +37,28 @@ static uint64_t cal_get_time_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000L);
 }
 
-static char *cal_trim_whitespace(char *str) {
-    if (!str) return NULL;
-    while (isspace((unsigned char)*str)) str++;
-    if (*str == '\0') return str;
-    char *end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) end--;
-    end[1] = '\0';
-    return str;
+static void cal_wait_for_user(const char *prompt) {
+    if (!isatty(STDIN_FILENO)) return;
+    if (prompt) {
+        printf("%s", prompt);
+        fflush(stdout);
+    }
+    char line[128];
+    if (!fgets(line, sizeof(line), stdin)) return;
+}
+
+static int cal_prompt_choice(const char *prompt, const char *valid_chars, char default_choice) {
+    if (!isatty(STDIN_FILENO)) return default_choice;
+    printf("%s", prompt);
+    fflush(stdout);
+    char line[128];
+    if (!fgets(line, sizeof(line), stdin)) return default_choice;
+    char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0' || *p == '\n' || *p == '\r') return default_choice;
+    char c = (char)tolower((unsigned char)*p);
+    if (valid_chars && strchr(valid_chars, c)) return c;
+    return default_choice;
 }
 
 void alps_calibrate_tracker_init(alps_calibrate_tracker_t *tracker) {
@@ -286,7 +301,6 @@ int alps_calibrate_save_config(const char *config_path, const alps_guided_profil
     }
 
     if (!in) {
-        /* Destination config does not exist: generate complete standard INI template */
         time_t now = time(NULL);
         char time_str[64] = {0};
         struct tm tm_buf;
@@ -323,7 +337,6 @@ int alps_calibrate_save_config(const char *config_path, const alps_guided_profil
         return 0;
     }
 
-    /* Existing configuration: update [tap] section while preserving comments and other settings */
     char line[512];
     int in_tap_sec = 0;
     int tap_sec_found = 0;
@@ -341,12 +354,10 @@ int alps_calibrate_save_config(const char *config_path, const alps_guided_profil
         char *p = copy;
         while (isspace((unsigned char)*p)) p++;
 
-        /* Section header detection */
         if (*p == '[') {
             char *end_b = strchr(p, ']');
             if (end_b) {
                 if (in_tap_sec) {
-                    /* Flush missing keys before exiting [tap] */
                     if (!written_tap1) fprintf(out, "tap1_pressure = %d\n", prof->rec_tap1_pressure);
                     if (!written_tap2) fprintf(out, "tap2_pressure = %d\n", prof->rec_tap2_pressure);
                     if (!written_release) fprintf(out, "release_pressure = %d\n", prof->rec_release_pressure);
@@ -486,16 +497,31 @@ int alps_calibrate_run(const alps_config_t *cfg) {
                                          ? cfg->config_path
                                          : ALPS_DEFAULT_CONFIG_PATH;
 
+restart_wizard:
+    g_cal_running = 1;
+
     printf("\n");
     printf("==============================================================================\n");
     printf("  ALPS Trackstick Guided 4-Phase Physical Calibration Wizard (v%s)\n", ALPS_DAEMON_VERSION);
     printf("==============================================================================\n");
     printf("Connected Hardware: %s (%s)\n", dev_name, dev_path);
     printf("Target Config File: %s\n\n", target_config_path);
-    printf("This guided calibration profiles your specific strain-gauge transducer and\n");
-    printf("tailors tap, rebound, and release parameters to your natural tactile cadence.\n");
-    printf("Press Ctrl+C at any time to exit without modifying your configuration.\n\n");
+    printf("This wizard customizes tap detection and kinetic parameters specifically\n");
+    printf("for your physical trackstick hardware and natural clicking rhythm.\n\n");
+    printf("The calibration consists of 4 distinct steps:\n");
+    printf("  Step 1: Resting baseline noise floor (2.0 seconds hands-off)\n");
+    printf("  Step 2: Natural single taps (5 clicks)\n");
+    printf("  Step 3: Double-click cadence & rebound (3 double clicks)\n");
+    printf("  Step 4: Steering shear profile (steer in circles for 3 seconds)\n\n");
+    printf("IMPORTANT:\n");
+    printf("  • Take your time. Each step will wait for you to read instructions first.\n");
+    printf("  • No timed countdown will start until you explicitly press [Enter].\n");
+    printf("  • You can retry any individual step if you want to re-sample.\n");
+    printf("  • Press Ctrl+C at any time to cancel without modifying configuration.\n");
+    printf("==============================================================================\n");
     fflush(stdout);
+
+    cal_wait_for_user("Press [Enter] when ready to begin Step 1... ");
 
     alps_guided_profile_t prof;
     alps_calibrate_profile_init(&prof);
@@ -504,12 +530,23 @@ int alps_calibrate_run(const alps_config_t *cfg) {
     char bar_buf[64];
 
     /* =========================================================================
-     * Phase 1/4: Resting Baseline & Noise Floor (2.0 seconds hands-off)
+     * Step 1/4: Resting Baseline & Noise Floor
      * ========================================================================= */
+phase1_retry:
+    if (!g_cal_running) goto cleanup_exit;
+
+    printf("\n------------------------------------------------------------------------------\n");
+    printf("Step 1 of 4: Resting Baseline & Noise Floor\n");
     printf("------------------------------------------------------------------------------\n");
-    printf("Phase 1/4: Resting Baseline & Noise Floor\n");
-    printf("Please DO NOT touch the trackstick for 2 seconds while the baseline settles...\n");
-    printf("------------------------------------------------------------------------------\n");
+    printf("INSTRUCTIONS:\n");
+    printf("  1. Completely remove your hand and fingers from the trackstick.\n");
+    printf("  2. Keep the laptop steady on a desk or table.\n");
+    printf("  3. When you press [Enter], the sensor will be sampled for 2.0 seconds\n");
+    printf("     to record quiescent noise levels and establish the zero baseline.\n\n");
+    fflush(stdout);
+
+    cal_wait_for_user("--> Release the trackstick completely, then press [Enter] to sample: ");
+    printf("Sampling resting baseline for 2.0 seconds...\n");
     fflush(stdout);
 
     uint64_t p1_start_ms = cal_get_time_ms();
@@ -517,6 +554,7 @@ int alps_calibrate_run(const alps_config_t *cfg) {
     uint64_t noise_z_sum = 0;
     uint32_t noise_samples = 0;
     int cur_z = 0;
+    prof.noise_floor_max_z = 0;
 
     while (g_cal_running) {
         uint64_t now_ms = cal_get_time_ms();
@@ -533,6 +571,16 @@ int alps_calibrate_run(const alps_config_t *cfg) {
                 for (size_t i = 0; i < count; i++) {
                     if (raw_events[i].type == EV_ABS && raw_events[i].code == ABS_PRESSURE) {
                         cur_z = raw_events[i].value;
+                        if (cur_z > 14) {
+                            /* Contact disturbance detected: notify and restart 2s timer */
+                            printf("\r\033[K[!] Contact detected (Z=%d)! Please release fingers completely. Resetting timer...", cur_z);
+                            fflush(stdout);
+                            p1_start_ms = now_ms;
+                            noise_z_sum = 0;
+                            noise_samples = 0;
+                            prof.noise_floor_max_z = 0;
+                            continue;
+                        }
                         noise_z_sum += (uint64_t)cur_z;
                         noise_samples++;
                         if (cur_z > prof.noise_floor_max_z) {
@@ -555,33 +603,46 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         }
     }
 
-    if (!g_cal_running) {
-        close(epfd);
-        close(stick_fd);
-        printf("\n\nCalibration cancelled by user.\n");
-        return 0;
-    }
+    if (!g_cal_running) goto cleanup_exit;
 
     prof.noise_floor_z = noise_samples > 0 ? (int)(noise_z_sum / noise_samples) : 0;
-    printf("\r\033[K  ✓ Baseline established: Resting Z=%d (Transient Noise Floor Max=%d)\n\n",
+    printf("\r\033[K  ✓ Step 1 Complete: Resting Z=%d (Transient Noise Floor Peak=%d)\n\n",
            prof.noise_floor_z, prof.noise_floor_max_z);
     fflush(stdout);
 
-    /* =========================================================================
-     * Phase 2/4: Natural Single Taps (5 repetitions)
-     * ========================================================================= */
-    printf("------------------------------------------------------------------------------\n");
-    printf("Phase 2/4: Natural Single Taps\n");
-    printf("Tap the trackstick naturally 5 times with your index finger (like clicking).\n");
-    printf("------------------------------------------------------------------------------\n");
-    fflush(stdout);
+    int rep1 = cal_prompt_choice("Accept baseline [Enter] or [r]etry Step 1? [Y/r]: ", "yr", 'y');
+    if (rep1 == 'r') goto phase1_retry;
 
+    cal_wait_for_user("\nPress [Enter] to continue to Step 2...");
+
+    /* =========================================================================
+     * Step 2/4: Natural Single Taps (5 repetitions)
+     * ========================================================================= */
+phase2_retry:
+    if (!g_cal_running) goto cleanup_exit;
+
+    prof.single_tap_count = 0;
+    prof.single_tap_min_peak = 255;
+    prof.single_tap_max_peak = 0;
+    uint64_t single_peak_sum = 0;
+    uint64_t single_dur_sum = 0;
     uint64_t contact_start_ms = 0;
     int active_peak_z = 0;
     int active_shear = 0;
-    uint64_t single_peak_sum = 0;
-    uint64_t single_dur_sum = 0;
     cur_z = 0;
+
+    printf("\n------------------------------------------------------------------------------\n");
+    printf("Step 2 of 4: Natural Single Taps\n");
+    printf("------------------------------------------------------------------------------\n");
+    printf("INSTRUCTIONS:\n");
+    printf("  1. Tap the trackstick naturally 5 times with your index finger.\n");
+    printf("  2. Click with your normal force, like clicking a link in a browser.\n");
+    printf("  3. The live meter below will show each tap as it registers.\n\n");
+    fflush(stdout);
+
+    cal_wait_for_user("--> Place finger over trackstick and press [Enter] to start tapping: ");
+    printf("Waiting for 5 natural taps...\n");
+    fflush(stdout);
 
     while (g_cal_running && prof.single_tap_count < 5) {
         struct epoll_event ep_ev[1];
@@ -632,36 +693,34 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         if (now_ms - last_render_ms >= 50) {
             last_render_ms = now_ms;
             alps_calibrate_format_bar(cur_z, 80, 24, bar_buf, sizeof(bar_buf));
-            printf("\r\033[K  %s Z=%-3d  [Tap %d/5] (Waiting for tap strike...)",
+            printf("\r\033[K  %s Z=%-3d  [Tap %d/5] (Tap naturally on trackstick...)",
                    bar_buf, cur_z, prof.single_tap_count + 1);
             fflush(stdout);
         }
     }
 
-    if (!g_cal_running) {
-        close(epfd);
-        close(stick_fd);
-        printf("\n\nCalibration cancelled by user.\n");
-        return 0;
-    }
+    if (!g_cal_running) goto cleanup_exit;
 
     prof.single_tap_avg_peak = (int)(single_peak_sum / (uint64_t)prof.single_tap_count);
     prof.single_tap_avg_dur_ms = (uint32_t)(single_dur_sum / (uint64_t)prof.single_tap_count);
-    printf("  ✓ Single tap profile: Avg Peak=%d (Min: %d, Max: %d), Avg Dwell=%ums\n\n",
+    printf("  ✓ Step 2 Complete: 5 taps recorded (Avg Peak=%d, Min=%d, Max=%d, Avg Dwell=%ums)\n\n",
            prof.single_tap_avg_peak, prof.single_tap_min_peak, prof.single_tap_max_peak,
            prof.single_tap_avg_dur_ms);
     fflush(stdout);
 
-    /* =========================================================================
-     * Phase 3/4: Double-Click Cadence & Rebound (3 repetitions)
-     * ========================================================================= */
-    printf("------------------------------------------------------------------------------\n");
-    printf("Phase 3/4: Double-Click Cadence & Rebound\n");
-    printf("Perform 3 natural double-clicks (tap-tap) at your normal double-click rhythm.\n");
-    printf("------------------------------------------------------------------------------\n");
-    fflush(stdout);
+    int rep2 = cal_prompt_choice("Keep these taps [Enter] or [r]etry Step 2? [Y/r]: ", "yr", 'y');
+    if (rep2 == 'r') goto phase2_retry;
 
-    int phase3_sub = 0; /* 0: waiting for tap 1, 1: waiting for tap 2 */
+    cal_wait_for_user("\nPress [Enter] to continue to Step 3...");
+
+    /* =========================================================================
+     * Step 3/4: Double-Click Cadence & Rebound (3 repetitions)
+     * ========================================================================= */
+phase3_retry:
+    if (!g_cal_running) goto cleanup_exit;
+
+    prof.double_tap_count = 0;
+    int phase3_sub = 0;
     int t1_peak = 0;
     uint64_t t1_end_ms = 0;
     uint64_t d_t1_sum = 0;
@@ -671,12 +730,24 @@ int alps_calibrate_run(const alps_config_t *cfg) {
     active_peak_z = 0;
     cur_z = 0;
 
+    printf("\n------------------------------------------------------------------------------\n");
+    printf("Step 3 of 4: Double-Click Cadence & Rebound\n");
+    printf("------------------------------------------------------------------------------\n");
+    printf("INSTRUCTIONS:\n");
+    printf("  1. Perform 3 natural double-clicks (tap-tap) at your normal double-click rhythm.\n");
+    printf("  2. This measures your double-click speed and the rebound force difference\n");
+    printf("     between the first strike and second rebound strike.\n\n");
+    fflush(stdout);
+
+    cal_wait_for_user("--> Press [Enter] when ready to perform double-clicks: ");
+    printf("Waiting for 3 double-clicks...\n");
+    fflush(stdout);
+
     while (g_cal_running && prof.double_tap_count < 3) {
         struct epoll_event ep_ev[1];
         int nfds = epoll_wait(epfd, ep_ev, 1, 50);
         uint64_t now_ms = cal_get_time_ms();
 
-        /* Reset pair if inter-tap pause exceeds 500ms */
         if (phase3_sub == 1 && now_ms - t1_end_ms > 500) {
             phase3_sub = 0;
         }
@@ -735,28 +806,50 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         }
     }
 
-    if (!g_cal_running) {
-        close(epfd);
-        close(stick_fd);
-        printf("\n\nCalibration cancelled by user.\n");
-        return 0;
-    }
+    if (!g_cal_running) goto cleanup_exit;
 
     prof.double_tap1_avg_peak = (int)(d_t1_sum / (uint64_t)prof.double_tap_count);
     prof.double_tap2_avg_peak = (int)(d_t2_sum / (uint64_t)prof.double_tap_count);
     prof.double_tap_avg_gap_ms = (uint32_t)(d_gap_sum / (uint64_t)prof.double_tap_count);
-    printf("  ✓ Double-click cadence: Avg Rebound=%d (Tap 1: %d), Avg Gap=%ums\n\n",
-           prof.double_tap2_avg_peak, prof.double_tap1_avg_peak, prof.double_tap_avg_gap_ms);
+    printf("  ✓ Step 3 Complete: 3 double-clicks recorded (Avg Rebound=%d, Avg Gap=%ums)\n\n",
+           prof.double_tap2_avg_peak, prof.double_tap_avg_gap_ms);
     fflush(stdout);
 
+    int rep3 = cal_prompt_choice("Keep these double-clicks [Enter] or [r]etry Step 3? [Y/r]: ", "yr", 'y');
+    if (rep3 == 'r') goto phase3_retry;
+
+    cal_wait_for_user("\nPress [Enter] to continue to Step 4...");
+
     /* =========================================================================
-     * Phase 4/4: Steering Shear Profile (3.0 seconds active navigation)
+     * Step 4/4: Steering Shear Profile (3.0 seconds active navigation)
      * ========================================================================= */
+phase4_retry:
+    if (!g_cal_running) goto cleanup_exit;
+
+    prof.steer_max_z = 0;
+    prof.steer_max_motion = 0;
+
+    printf("\n------------------------------------------------------------------------------\n");
+    printf("Step 4 of 4: Steering Shear Profile\n");
     printf("------------------------------------------------------------------------------\n");
-    printf("Phase 4/4: Steering Shear Profile\n");
-    printf("Push and steer the trackstick in circles for 3 seconds as if navigating.\n");
-    printf("------------------------------------------------------------------------------\n");
+    printf("INSTRUCTIONS:\n");
+    printf("  1. In this step, you will steer the trackstick in small continuous circles\n");
+    printf("     for 3 seconds, as if you are moving the mouse pointer around the screen.\n");
+    printf("  2. This teaches the daemon the difference between intentional cursor steering\n");
+    printf("     and tapping strikes, preventing cursor navigation from misfiring clicks.\n");
+    printf("  3. A 3-second countdown will prepare you before measurement begins.\n\n");
     fflush(stdout);
+
+    cal_wait_for_user("--> Place finger on the nub and press [Enter] when ready to steer: ");
+
+    printf("Get ready... "); fflush(stdout);
+    if (isatty(STDIN_FILENO)) {
+        for (int c = 3; c >= 1; c--) {
+            printf("%d... ", c); fflush(stdout);
+            usleep(600000);
+        }
+    }
+    printf("STEER IN CIRCLES NOW!\n"); fflush(stdout);
 
     uint64_t p4_start_ms = cal_get_time_ms();
     int cur_shear = 0;
@@ -804,17 +897,18 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         }
     }
 
-    close(epfd);
-    close(stick_fd);
+    if (!g_cal_running) goto cleanup_exit;
 
-    if (!g_cal_running) {
-        printf("\n\nCalibration cancelled by user.\n");
-        return 0;
-    }
-
-    printf("\r\033[K  ✓ Steering profile: Max Vertical Z=%d, Max Lateral Shear=%d counts\n\n",
+    printf("\r\033[K  ✓ Step 4 Complete: Max Vertical Z=%d, Max Lateral Shear=%d counts\n\n",
            prof.steer_max_z, prof.steer_max_motion);
     fflush(stdout);
+
+    if (prof.steer_max_motion < 6) {
+        printf("Notice: Very little or no steering shear was observed (Max shear=%d counts).\n",
+               prof.steer_max_motion);
+        int rep4 = cal_prompt_choice("Would you like to retry Step 4? [Y/n]: ", "yn", 'y');
+        if (rep4 == 'y') goto phase4_retry;
+    }
 
     /* Compute tailored optimal recommendations */
     alps_calibrate_compute_guided_recommendations(&prof);
@@ -843,22 +937,17 @@ int alps_calibrate_run(const alps_config_t *cfg) {
     printf("  tap_motion = %d\n", prof.rec_tap_motion);
     printf("  double_tap_window_ms = %u\n\n", prof.rec_double_window_ms);
 
-    int action = 0; /* 0: do nothing, 1: save calibrated, 2: reset defaults */
-    if (isatty(STDIN_FILENO)) {
-        printf("Apply settings to %s? [Y]es (save) / [n]o / [r]eset to defaults: ", target_config_path);
-        fflush(stdout);
-        char ans[64];
-        if (fgets(ans, sizeof(ans), stdin)) {
-            char *p = cal_trim_whitespace(ans);
-            if (*p == '\0' || *p == 'y' || *p == 'Y') {
-                action = 1;
-            } else if (*p == 'r' || *p == 'R') {
-                action = 2;
-            }
-        }
-    }
+    printf("------------------------------------------------------------------------------\n");
+    printf("What would you like to do?\n");
+    printf("  [1] Save and apply these settings to %s (Recommended)\n", target_config_path);
+    printf("  [2] Re-run the full 4-phase calibration from the beginning\n");
+    printf("  [3] Reset configuration file to factory defaults\n");
+    printf("  [4] Exit without saving\n");
+    printf("------------------------------------------------------------------------------\n");
 
-    if (action == 1) {
+    int final_choice = cal_prompt_choice("Choice [1-4] (default: 1): ", "1234", '1');
+
+    if (final_choice == '1') {
         int res = alps_calibrate_save_config(target_config_path, &prof);
         if (res == 0) {
             printf("\n✓ Successfully updated %s!\n", target_config_path);
@@ -878,7 +967,9 @@ int alps_calibrate_run(const alps_config_t *cfg) {
         } else {
             printf("\nError: Failed to save configuration to %s (code %d).\n\n", target_config_path, res);
         }
-    } else if (action == 2) {
+    } else if (final_choice == '2') {
+        goto restart_wizard;
+    } else if (final_choice == '3') {
         int rst_res = alps_config_reset_file(target_config_path);
         if (rst_res == 0) {
             printf("\n✓ Successfully restored %s to factory defaults!\n", target_config_path);
@@ -892,16 +983,273 @@ int alps_calibrate_run(const alps_config_t *cfg) {
                 printf("To apply permanently to your system, run:\n");
                 printf("  sudo cp %s %s\n", fallback_path, target_config_path);
                 printf("  sudo systemctl restart alps-stick\n\n");
-            } else {
-                printf("Failed to write to %s as well (code %d).\n\n", fallback_path, fb_res);
             }
-        } else {
-            printf("\nError: Failed to reset configuration at %s (code %d).\n\n", target_config_path, rst_res);
         }
-    } else if (isatty(STDIN_FILENO)) {
-        printf("\nSettings not saved. You may manually copy the [tap] block above into %s.\n\n",
-               target_config_path);
+    } else {
+        printf("\nExited without modifying configuration.\n\n");
     }
 
+cleanup_exit:
+    close(epfd);
+    close(stick_fd);
+
+    if (!g_cal_running) {
+        printf("\n\nCalibration cancelled by user.\n");
+    }
+
+    return 0;
+}
+
+int alps_calibrate_run_hud(const alps_config_t *cfg) {
+    (void)cfg;
+    char dev_path[512] = {0};
+    char dev_name[256] = {0};
+
+    int stick_fd = alps_device_find_stick(dev_path, sizeof(dev_path), dev_name, sizeof(dev_name));
+    if (stick_fd < 0) {
+        fprintf(stderr, "\nError: ALPS DualPoint Stick not found in /dev/input/event*!\n");
+        return 1;
+    }
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = cal_sig_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
+    int epfd = epoll_create1(EPOLL_CLOEXEC);
+    if (epfd < 0) {
+        close(stick_fd);
+        return 1;
+    }
+
+    struct epoll_event ev_sub;
+    memset(&ev_sub, 0, sizeof(ev_sub));
+    ev_sub.events = EPOLLIN;
+    ev_sub.data.fd = stick_fd;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, stick_fd, &ev_sub);
+
+    if (isatty(STDIN_FILENO)) {
+        struct epoll_event ev_stdin;
+        memset(&ev_stdin, 0, sizeof(ev_stdin));
+        ev_stdin.events = EPOLLIN;
+        ev_stdin.data.fd = STDIN_FILENO;
+        epoll_ctl(epfd, EPOLL_CTL_ADD, STDIN_FILENO, &ev_stdin);
+    }
+
+    alps_calibrate_tracker_t tracker;
+    alps_calibrate_tracker_init(&tracker);
+
+    printf("\n==============================================================================\n");
+    printf("  ALPS Trackstick Live Diagnostic Telemetry HUD\n");
+    printf("==============================================================================\n");
+    printf("Connected Device: %s (%s)\n", dev_name, dev_path);
+    printf("Press Ctrl+C or 'q' [Enter] to exit HUD.\n");
+    printf("------------------------------------------------------------------------------\n");
+    fflush(stdout);
+
+    struct input_event raw_events[32];
+    char bar_buf[64];
+    uint64_t last_render_ms = 0;
+    int tap_flash = 0;
+    g_cal_running = 1;
+
+    while (g_cal_running) {
+        struct epoll_event ep_events[2];
+        int nfds = epoll_wait(epfd, ep_events, 2, 50);
+        uint64_t now_ms = cal_get_time_ms();
+
+        for (int i = 0; i < nfds; i++) {
+            if (ep_events[i].data.fd == STDIN_FILENO) {
+                char ch = 0;
+                if (read(STDIN_FILENO, &ch, 1) > 0) {
+                    if (ch == 'q' || ch == 'Q') {
+                        g_cal_running = 0;
+                        break;
+                    }
+                }
+            } else if (ep_events[i].data.fd == stick_fd) {
+                ssize_t bytes = read(stick_fd, raw_events, sizeof(raw_events));
+                if (bytes > 0) {
+                    size_t count = (size_t)bytes / sizeof(struct input_event);
+                    for (size_t j = 0; j < count; j++) {
+                        alps_event_t norm_ev;
+                        int valid = 0;
+
+                        if (raw_events[j].type == EV_ABS && raw_events[j].code == ABS_PRESSURE) {
+                            norm_ev.type = ALPS_EV_PRESSURE;
+                            norm_ev.value = raw_events[j].value;
+                            valid = 1;
+                        } else if (raw_events[j].type == EV_REL) {
+                            if (raw_events[j].code == REL_X) {
+                                norm_ev.type = ALPS_EV_REL_X;
+                                norm_ev.value = raw_events[j].value;
+                                valid = 1;
+                            } else if (raw_events[j].code == REL_Y) {
+                                norm_ev.type = ALPS_EV_REL_Y;
+                                norm_ev.value = raw_events[j].value;
+                                valid = 1;
+                            }
+                        }
+
+                        if (valid) {
+                            if (alps_calibrate_tracker_feed_event(&tracker, &norm_ev, now_ms)) {
+                                tap_flash = 10;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (now_ms - last_render_ms >= 50) {
+            last_render_ms = now_ms;
+            alps_calibrate_format_bar(tracker.current_z, 80, 26, bar_buf, sizeof(bar_buf));
+
+            const char *status_str = "Resting";
+            if (tap_flash > 0) {
+                status_str = ">>> TAP REGISTERED! <<<";
+                tap_flash--;
+            } else if (tracker.active_press_start_ms > 0) {
+                if (tracker.active_motion_counts >= 6) {
+                    status_str = "Steering Shear (Navigating)";
+                } else {
+                    status_str = "Contact Press Active";
+                }
+            }
+
+            printf("\r\033[K%s  Z=%-3d (Peak=%-2d)  dX=%-+3d dY=%-+3d  [%s]  Taps: %d",
+                   bar_buf,
+                   tracker.current_z,
+                   tracker.active_press_start_ms > 0 ? tracker.active_peak_z : (tracker.tap_count > 0 ? tracker.max_tap_z : 0),
+                   tracker.current_dx,
+                   tracker.current_dy,
+                   status_str,
+                   tracker.tap_count);
+            fflush(stdout);
+        }
+    }
+
+    close(epfd);
+    close(stick_fd);
+    printf("\n\nExiting Diagnostic HUD.\n");
+    return 0;
+}
+
+int alps_interactive_menu_run(const alps_config_t *cfg) {
+    g_cal_running = 1;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = cal_sig_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
+    while (g_cal_running) {
+        printf("\n");
+        printf("==============================================================================\n");
+        printf("  ALPS DualPoint Trackstick — Interactive Control Center (v%s)\n", ALPS_DAEMON_VERSION);
+        printf("==============================================================================\n");
+
+        char dev_path[256] = {0};
+        char dev_name[256] = {0};
+        int stick_fd = alps_device_find_stick(dev_path, sizeof(dev_path), dev_name, sizeof(dev_name));
+        if (stick_fd >= 0) {
+            close(stick_fd);
+            printf("  Hardware Device:    ● CONNECTED (%s on %s)\n", dev_name, dev_path);
+        } else {
+            printf("  Hardware Device:    ○ NOT DETECTED (/dev/input/event*)\n");
+        }
+
+        int svc_active = alps_systemd_is_active("alps-stick");
+        if (svc_active == 1) {
+            printf("  Daemon Service:     ● ACTIVE (alps-stick.service running)\n");
+        } else if (svc_active == 0) {
+            printf("  Daemon Service:     ○ INACTIVE (alps-stick.service stopped)\n");
+        } else {
+            printf("  Daemon Service:     ? UNMANAGED (systemd unavailable)\n");
+        }
+
+        const char *conf_path = (cfg && cfg->config_path[0] != '\0') ? cfg->config_path : ALPS_DEFAULT_CONFIG_PATH;
+        printf("  Configuration File: %s\n", conf_path);
+        printf("------------------------------------------------------------------------------\n");
+        printf("Actions:\n");
+        printf("  [1] Run Guided 4-Phase Physical Calibration Wizard\n");
+        printf("  [2] Live Transducer Force & Motion Telemetry (Diagnostic HUD)\n");
+        printf("  [3] View Current Active Configuration File\n");
+        printf("  [4] Reset Configuration File to Factory Defaults\n");
+        printf("  [5] Restart Background Service (alps-stick.service)\n");
+        printf("  [6] View Recent Daemon Service Logs (journalctl)\n");
+        printf("  [q] Quit Control Center\n");
+        printf("------------------------------------------------------------------------------\n");
+        printf("Select an action [1-6, q]: ");
+        fflush(stdout);
+
+        char line[64];
+        if (!fgets(line, sizeof(line), stdin)) {
+            break;
+        }
+
+        char *p = line;
+        while (isspace((unsigned char)*p)) p++;
+
+        if (*p == '1') {
+            alps_calibrate_run(cfg);
+        } else if (*p == '2') {
+            alps_calibrate_run_hud(cfg);
+        } else if (*p == '3') {
+            printf("\n--- Current Configuration (%s) ---\n", conf_path);
+            FILE *f = fopen(conf_path, "r");
+            if (f) {
+                char cline[512];
+                while (fgets(cline, sizeof(cline), f)) {
+                    fputs(cline, stdout);
+                }
+                fclose(f);
+            } else {
+                printf("Notice: Configuration file does not exist yet. Built-in defaults are active.\n");
+            }
+            cal_wait_for_user("\nPress [Enter] to return to menu...");
+        } else if (*p == '4') {
+            int rc = alps_config_reset_file(conf_path);
+            if (rc == 0) {
+                printf("\n✓ Successfully restored '%s' to factory defaults.\n", conf_path);
+                alps_service_offer_restart("alps-stick", 0);
+            } else if (rc == -2) {
+                printf("\nPermission denied writing to '%s'. Run with sudo.\n", conf_path);
+            } else {
+                printf("\nFailed to reset configuration file.\n");
+            }
+            cal_wait_for_user("Press [Enter] to return to menu...");
+        } else if (*p == '5') {
+            printf("\nRestarting alps-stick.service...\n");
+            int rc = alps_systemd_restart("alps-stick");
+            if (rc == 0) {
+                printf("✓ Successfully restarted alps-stick.service!\n");
+            } else {
+                printf("Notice: Could not restart service. Run manually: sudo systemctl restart alps-stick\n");
+            }
+            cal_wait_for_user("Press [Enter] to return to menu...");
+        } else if (*p == '6') {
+            printf("\n--- Recent Logs (journalctl -u alps-stick.service -n 25) ---\n");
+            pid_t pid = fork();
+            if (pid == 0) {
+                execlp("journalctl", "journalctl", "-u", "alps-stick.service", "-n", "25", "--no-pager", NULL);
+                _exit(1);
+            } else if (pid > 0) {
+                int status = 0;
+                waitpid(pid, &status, 0);
+            }
+            cal_wait_for_user("\nPress [Enter] to return to menu...");
+        } else if (*p == 'q' || *p == 'Q') {
+            break;
+        }
+    }
+
+    printf("\nExiting Control Center.\n");
     return 0;
 }

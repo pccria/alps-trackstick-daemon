@@ -111,6 +111,14 @@ sudo make install
 
 This compiles `bin/alps-stick`, installs the binary to `/usr/local/bin/`, sets up the systemd service at `/etc/systemd/system/alps-stick.service`, and enables it to run on boot.
 
+### Interactive Control Center (`-i, --interactive`)
+
+For a unified terminal control center with hardware status, live telemetry HUD, calibration, configuration inspection, and service management:
+
+```bash
+sudo ./bin/alps-stick -i
+```
+
 ### Guided Physical Calibration Wizard (`-C, --calibrate`)
 
 To automatically profile your trackstick's strain-gauge sensor and generate tailored physical parameters for your natural clicking rhythm:
@@ -119,13 +127,13 @@ To automatically profile your trackstick's strain-gauge sensor and generate tail
 sudo ./bin/alps-stick --calibrate
 ```
 
-The guided 4-phase calibration wizard walks through:
-1. **Resting Baseline & Noise Floor**: Samples quiescent transducer state for 2 seconds to establish the physical noise floor.
-2. **Natural Single Taps**: Records 5 natural tap strikes to determine average peak contact force and dwell duration.
-3. **Double-Click Cadence & Rebound**: Measures 3 double-clicks to calculate rebound strike force and inter-tap cadence gap.
-4. **Steering Shear Profile**: Profiles 3 seconds of active navigation to establish the boundary between tap strikes and deliberate cursor steering.
+The user-paced calibration wizard walks through 4 distinct steps:
+1. **Resting Baseline & Noise Floor**: Samples quiescent transducer state for 2 seconds (starts only when you press Enter).
+2. **Natural Single Taps**: Records 5 natural tap strikes (with optional retry) to determine peak force and contact dwell time.
+3. **Double-Click Cadence & Rebound**: Measures 3 double-clicks (with optional retry) to calculate cadence gap and rebound strike force.
+4. **Steering Shear Profile**: Explains navigation steering, waits for you to place your finger, gives a 3-2-1 countdown, and measures 3 seconds of continuous circle steering.
 
-Upon completion, optimal parameters are derived and can be automatically saved directly into `/etc/alps-stick.conf`, or reset back to factory defaults.
+Upon completion, you can save the settings to `/etc/alps-stick.conf` (with automatic service restart), retry, or reset to factory defaults.
 
 ### Resetting Configuration to Defaults
 

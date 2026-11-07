@@ -19,6 +19,7 @@ void alps_config_init_defaults(alps_config_t *cfg) {
 
     cfg->verbose = 0;
     cfg->calibrate_mode = 0;
+    cfg->interactive_mode = 0;
     cfg->reset_config_mode = 0;
     cfg->force_mode = 0;
     snprintf(cfg->config_path, sizeof(cfg->config_path), "%s", ALPS_DEFAULT_CONFIG_PATH);
@@ -228,7 +229,8 @@ void alps_config_print_help(const char *prog_name) {
     printf("General Options:\n");
     printf("  -c, --config <path>          Path to configuration file (default: %s)\n",
            ALPS_DEFAULT_CONFIG_PATH);
-    printf("  -C, --calibrate              Launch interactive terminal force calibration wizard\n");
+    printf("  -i, --interactive            Open unified interactive terminal Control Center\n");
+    printf("  -C, --calibrate              Launch guided 4-phase physical calibration wizard\n");
     printf("  -R, --reset-config           Reset configuration file to factory defaults and exit\n");
     printf("  -f, --force                  Bypass confirmation prompts for destructive operations\n");
     printf("  -v, --verbose                Enable live gesture telemetry and state logging\n");
@@ -278,6 +280,8 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             cfg->explicit_config = 1;
         } else if (strcmp(argv[i], "-C") == 0 || strcmp(argv[i], "--calibrate") == 0) {
             cfg->calibrate_mode = 1;
+        } else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--interactive") == 0 || strcmp(argv[i], "--menu") == 0) {
+            cfg->interactive_mode = 1;
         } else if (strcmp(argv[i], "-R") == 0 || strcmp(argv[i], "--reset-config") == 0) {
             cfg->reset_config_mode = 1;
         } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {

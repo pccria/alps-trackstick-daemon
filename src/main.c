@@ -155,6 +155,8 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "-R") == 0 || strcmp(argv[i], "--reset-config") == 0) {
             cfg.reset_config_mode = 1;
+        } else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--interactive") == 0 || strcmp(argv[i], "--menu") == 0) {
+            cfg.interactive_mode = 1;
         } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
             cfg.force_mode = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -210,6 +212,10 @@ int main(int argc, char *argv[]) {
     }
     if (parse_rc < 0) {
         return 1;
+    }
+
+    if (cfg.interactive_mode) {
+        return alps_interactive_menu_run(&cfg);
     }
 
     if (cfg.calibrate_mode) {

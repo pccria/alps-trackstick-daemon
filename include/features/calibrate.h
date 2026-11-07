@@ -136,4 +136,20 @@ int alps_calibrate_save_config(const char *config_path, const alps_guided_profil
  */
 int alps_calibrate_run(const alps_config_t *cfg);
 
+/**
+ * @brief Runs the live diagnostic telemetry HUD showing instantaneous pressure, shear, and states.
+ *
+ * @param cfg Daemon configuration container.
+ * @return 0 on clean exit, non-zero on error.
+ */
+int alps_calibrate_run_hud(const alps_config_t *cfg);
+
+/**
+ * @brief Launches the unified interactive terminal Control Center.
+ *
+ * @param cfg Daemon configuration container.
+ * @return 0 on clean exit, non-zero on error.
+ */
+int alps_interactive_menu_run(const alps_config_t *cfg);
+
 #endif /* ALPS_FEATURES_CALIBRATE_H */
