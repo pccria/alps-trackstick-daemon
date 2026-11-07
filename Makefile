@@ -1,18 +1,47 @@
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra -D_GNU_SOURCE
+CFLAGS ?= -O2 -Wall -Wextra -Iinclude -D_GNU_SOURCE
+
 TARGET = bin/alps-stick
-SRC = src/alps_stick_daemon.c
+TEST_TARGET = bin/test_tap_gesture
+
+DAEMON_SRCS = \
+	src/main.c \
+	src/core/config.c \
+	src/features/tap_gesture.c \
+	src/io/device.c \
+	src/io/emitter.c
+
+TEST_SRCS = \
+	tests/test_tap_gesture.c \
+	src/core/config.c \
+	src/features/tap_gesture.c
+
+HEADERS = \
+	include/core/event.h \
+	include/core/action.h \
+	include/core/config.h \
+	include/features/tap_gesture.h \
+	include/io/device.h \
+	include/io/emitter.h
+
 SERVICE = alps-stick.service
 INSTALL_BIN = /usr/local/bin/alps-stick
 INSTALL_SERVICE = /etc/systemd/system/$(SERVICE)
 
-.PHONY: all clean install uninstall
+.PHONY: all test clean install uninstall
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
+$(TARGET): $(DAEMON_SRCS) $(HEADERS)
 	@mkdir -p bin
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $(DAEMON_SRCS)
+
+$(TEST_TARGET): $(TEST_SRCS) $(HEADERS)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -o $@ $(TEST_SRCS)
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
 
 clean:
 	rm -rf bin
