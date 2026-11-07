@@ -145,6 +145,22 @@ int main(int argc, char *argv[]) {
     alps_config_t cfg;
     alps_config_init_defaults(&cfg);
 
+    /* First pass: inspect for -c / --config or -h / --help / --version */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
+            if (i + 1 < argc) {
+                snprintf(cfg.config_path, sizeof(cfg.config_path), "%s", argv[i + 1]);
+                cfg.explicit_config = 1;
+            }
+        }
+    }
+
+    /* Load configuration file (if present) */
+    if (alps_config_load_file(&cfg, cfg.config_path, cfg.explicit_config) < 0) {
+        return 1;
+    }
+
+    /* CLI flags override configuration file settings */
     int parse_rc = alps_config_parse_args(&cfg, argc, argv);
     if (parse_rc > 0) {
         return 0; /* --help or --version handled */

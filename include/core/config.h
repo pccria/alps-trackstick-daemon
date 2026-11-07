@@ -31,6 +31,7 @@
 #define ALPS_DEFAULT_PRE_MOTION_LIMIT        10    /**< Accumulated motion in window that classifies spikes as steering */
 #define ALPS_DEFAULT_MOTION_CAP              10000 /**< Saturation ceiling for motion accumulators */
 #define ALPS_POINTER_SPEED_UNSET             (-999.0f) /**< Sentinel indicating native OS ballistics are preserved */
+#define ALPS_DEFAULT_CONFIG_PATH             "/etc/alps-stick.conf" /**< Default system configuration file */
 
 /* --- Calibrated Default Scroll Parameters --- */
 #define ALPS_DEFAULT_SCROLL_ENABLED          1     /**< Middle-button scrolling enabled by default */
@@ -80,6 +81,8 @@ typedef struct {
  */
 typedef struct {
     int verbose;                     /**< Enable live gesture telemetry and state transition logging */
+    char config_path[512];           /**< Path to configuration file (default: /etc/alps-stick.conf) */
+    int explicit_config;             /**< Non-zero if config_path was explicitly set via CLI */
     float pointer_speed;             /**< Optional xinput accel speed [-1.0, 1.0], or ALPS_POINTER_SPEED_UNSET */
     alps_tap_config_t tap;           /**< Tap, double-click, and drag feature configuration */
     alps_scroll_config_t scroll;     /**< 2D kinetic scrolling feature configuration */
@@ -91,6 +94,27 @@ typedef struct {
  * @param cfg Pointer to configuration structure to initialize.
  */
 void alps_config_init_defaults(alps_config_t *cfg);
+
+/**
+ * @brief Loads and parses key-value settings from an INI configuration file.
+ *
+ * If `explicit_path` is 0 (default path `/etc/alps-stick.conf`), a missing file
+ * is treated as non-fatal (returns 0 with existing defaults retained).
+ * If `explicit_path` is non-zero (user specified via `-c`/`--config`), a missing or
+ * unreadable file returns -1 with an error diagnostic.
+ *
+ * Supported syntax:
+ * - Comments: lines starting with `#` or `;`
+ * - Section headers: `[general]`, `[tap]`, `[scroll]` (optional, keys can also be flat)
+ * - Key-value pairs: `key = value`
+ * - Booleans: `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`
+ *
+ * @param cfg           Target configuration container to update.
+ * @param path          Filesystem path to configuration file.
+ * @param explicit_path Non-zero if `path` was explicitly specified by the user.
+ * @return 0 on success (or non-fatal missing default file), -1 on error.
+ */
+int alps_config_load_file(alps_config_t *cfg, const char *path, int explicit_path);
 
 /**
  * @brief Parses command-line arguments into `cfg`.

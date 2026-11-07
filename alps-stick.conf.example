@@ -1,0 +1,72 @@
+# ==============================================================================
+# ALPS DualPoint Trackstick Daemon Configuration
+# Default Location: /etc/alps-stick.conf
+# ==============================================================================
+# Syntax:
+#   - Lines starting with '#' or ';' are comments.
+#   - Section headers (e.g., [general], [tap], [scroll]) are optional.
+#   - Boolean values accept: true/false, yes/no, on/off, 1/0.
+#   - Values can be overridden at runtime via command-line flags.
+# ==============================================================================
+
+[general]
+# Enable live gesture telemetry and state transition logging to stdout/journal.
+# verbose = false
+
+# Override libinput pointer acceleration speed [-1.0 to 1.0].
+# Unset by default to preserve native desktop environment (KDE/GNOME) settings.
+# pointer_speed = 0.0
+
+[tap]
+# Initial tap activation pressure threshold [1..255] (default: 22).
+# Feather-light activation floor for the physical transducer.
+# tap1_pressure = 22
+
+# Sensitive rebound threshold [1..255] for rapid double clicks (default: 15).
+# tap2_pressure = 15
+
+# Mechanical unload baseline [0..255] where finger contact is released (default: 10).
+# release_pressure = 10
+
+# Maximum contact duration in milliseconds for an impulse tap (default: 180 ms).
+# tap_duration_ms = 180
+
+# Maximum permitted lateral shear motion counts during a tap (default: 16 counts).
+# Rejects accidental steering slips as taps.
+# tap_motion = 16
+
+# Primed double-tap recognition window in milliseconds (default: 260 ms).
+# double_tap_window_ms = 260
+
+# Lateral motion threshold on Tap 2 that locks into active dragging (default: 6 counts).
+# drag_start_motion = 6
+
+# Inactivity grace window in milliseconds before dropping an active drag (default: 140 ms).
+# Allows continuous dragging across strain-gauge zero-pressure shear transitions.
+# drag_release_grace_ms = 140
+
+# Reverse contact-shear snap on tap release to counteract finger bounce (default: true).
+# anti_drift = true
+
+[scroll]
+# Enable 2D kinetic scrolling using physical middle-button hold (default: true).
+# enabled = true
+
+# Base high-resolution scroll units per motion count [1..60] (default: 12).
+# Standard Linux detent notch = 120 units; 12 units = 10% of a notch.
+# hires_multiplier = 12
+
+# Enable dual-range progressive quadratic ballistics acceleration (default: true).
+# Provides micro-stepping precision on gentle deflection and rapid speed on full glide.
+# progressive = true
+
+# Acceleration power factor for progressive curve [0..20] (default: 6).
+# accel_factor = 6
+
+# Enable continuous C^1 Hermite angle blending and vector cone deadband (default: true).
+# Suppresses accidental lateral browser navigation during vertical scrolling.
+# axis_lock = true
+
+# Lock cursor position with (-dx, -dy) counter-drift during scroll (default: true).
+# Keeps mouse pointer exactly stationary over the target element while scrolling.
+# counter_drift = true
