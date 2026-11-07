@@ -1,163 +1,221 @@
 # ALPS DualPoint Trackstick Gesture Daemon
 
-A lightweight, modular native Linux userspace daemon that restores tap-to-click, double-click, tap-and-drag gestures, and high-resolution 2D kinetic scrolling to ALPS DualPoint pointing sticks by intercepting raw kernel `evdev` pressure/button streams and synthesizing mouse/scroll events via `uinput`.
+A lightweight, native Linux userspace daemon written in pure C that restores **tap-to-click, double-click, tap-and-drag gestures**, and **high-resolution 2D kinetic scrolling** to ALPS DualPoint pointing sticks.
 
-## Background
-
-Under modern Linux desktop environments (Wayland/X11 with `libinput`), tracksticks are handled purely as relative motion pointers. The kernel's `alps.c` driver reports downward physical force on the stick's rubber cap as `ABS_PRESSURE`, but `libinput` disregards pressure on pointing sticks because tap gestures are only defined for touchpads.
-
-This daemon runs in the background, connects to the raw `/dev/input/event*` node of the ALPS pointing stick, evaluates contact dynamics through pure, unit-tested finite state machines, and emits clean `BTN_LEFT` clicks, anti-drift corrections, and continuous 2D wheel events via `/dev/uinput` with zero CPU busy-polling.
-
-## Project Structure (`v0.7.0` Event-Action Pipeline)
-
-The codebase is organized into a clean, extensible **Event-Action Pipeline** separating pure physics and wheel math from Linux kernel `evdev`/`uinput` plumbing:
-
-```text
-alps-trackstick-daemon/
-├── include/
-│   ├── core/
-│   │   ├── event.h          # Normalized input event struct & saturating math helpers
-│   │   ├── action.h         # Abstract non-blocking output actions (Click, Down/Up, Scroll)
-│   │   └── config.h         # Runtime configuration struct, calibrated defaults, CLI parser
-│   ├── features/
-│   │   ├── tap_gesture.h    # Pure, non-blocking tap, double-click, and drag state machine API
-│   │   └── scroll_wheel.h   # 2D kinetic scroll state machine API with axis-lock deadband
-│   └── io/
-│       ├── device.h         # /dev/input discovery & optional xinput speed helper
-│       └── emitter.h        # Virtual /dev/uinput mouse & wheel action dispatcher
-├── src/
-│   ├── main.c               # Daemon entry point, signal handling, and epoll event loop
-│   ├── core/
-│   │   └── config.c         # Default parameters and command-line argument parser
-│   ├── features/
-│   │   ├── tap_gesture.c    # Anti-drift physical transducer state machine implementation
-│   │   └── scroll_wheel.c   # 2D scroll accumulator and cross-axis deadband filter
-│   └── io/
-│       ├── device.c         # EVIOCGNAME scanning and safe fork/execv xinput helper
-│       └── emitter.c        # uinput device lifecycle and non-blocking frame emission
-├── tests/
-│   ├── test_tap_gesture.c   # Deterministic unit tests for all tap/drag gesture scenarios
-│   └── test_scroll_wheel.c  # Deterministic unit tests for 2D kinetic scrolling
-├── Makefile
-└── alps-stick.service
-```
-
-## Architecture
-
-### 1. Anti-Drift Physical Transducer (Tap-to-Click & Drag)
-
-Rather than attempting to guess user intent through delayed confirmation heuristics, the daemon implements a non-blocking **Anti-Drift Physical Transducer**:
-
-1. **Light, Smooth Tap Activation ($Z \ge 22$):**
-   * Keeps the contact floor at $Z=22$, enabling gentle, effortless, smooth tapping.
-   * **Force-Ratio Discriminator:** Requires $Z \ge \text{motion} \times 1.5$ for any lateral movement $> 6$ counts, distinguishing true downward taps from steering micro-nudges.
-
-2. **Anti-Drift Snap (Zero Target Slip):**
-   * When an index finger strikes a flexible rubber dome, contact shear physically deflects the pointer by a few pixels ($dx, dy$).
-   * Upon lift-off, the daemon emits an equal and opposite relative motion pulse ($-dx, -dy$) via `uinput` in the **exact same `SYN_REPORT` frame** as the click.
-   * The cursor snaps right back to the pre-tap coordinate before the click lands, completely eliminating cursor slip.
-
-3. **100% Non-Blocking Reactive Engine (Zero-`usleep`):**
-   * Minimum click hold intervals (`15ms`) are evaluated strictly via `epoll_wait` timer deadlines (`ALPS_TAP_STATE_TAP1_HOLD` and `ALPS_TAP_STATE_TAP2_HOLD`).
-   * The single-threaded event loop never sleeps or blocks, guaranteeing instantaneous response to steering changes.
-
-4. **Zero-Latency Rebound & Drag Lock (Tap 2):**
-   * Sensitive rebound threshold ($Z \ge 15$) captures natural second strikes without false triggers, emitting `BTN_LEFT 1` **immediately on touchdown**.
-   * **Double-Click:** Quick lift-off without motion releases immediately with anti-drift snap.
-   * **Tap-and-Drag:** Steering ($\ge 6$ counts) locks drag from millisecond zero. Tilting the stick sideways drops $Z \to 0$, which is sustained continuously by relative motion with a 140ms inactivity grace.
-
-### 2. High-Resolution 2D Kinetic Scrolling (`features/scroll_wheel`)
-
-Holding the physical trackstick middle button (`BTN_MIDDLE`) and deflecting the stick engages continuous 2D kinetic scrolling:
-
-1. **Continuous Sub-Pixel Wheel (`REL_WHEEL_HI_RES` / `REL_HWHEEL_HI_RES`):**
-   * Emits high-resolution scroll deltas (120 units per standard detent notch) for butter-smooth 60Hz/120Hz scrolling in modern browsers and desktop compositors.
-   * Maintains sub-pixel remainder accumulators, emitting legacy detent clicks (`REL_WHEEL` / `REL_HWHEEL`) whenever 120 units accumulate for backwards compatibility.
-
-2. **Primary Axis-Lock Deadband Filter:**
-   * Natural finger anatomy pushes at slight angles during vertical reading.
-   * When vertical scrolling begins, horizontal deflection is filtered through a 4-count deadband to eliminate annoying lateral page jitter. Steering firmly sideways breaks the deadband to permit fluid 2D diagonal panning.
-
-3. **Counter-Drift Cursor Lock:**
-   * Emits counteracting relative motion ($-dx, -dy$) in the same frame as scroll wheel packets, anchoring the mouse pointer rock-solid in place while the viewport scrolls.
+It operates by intercepting raw Linux kernel `evdev` pressure and button streams from `/dev/input/event*`, evaluating contact dynamics through deterministic finite state machines, and synthesizing clean mouse and wheel events via `/dev/uinput` with zero CPU busy-polling.
 
 ---
 
-## Installation & Testing
+> [!IMPORTANT]
+> ### System Compatibility & Target Environment
+> - **Primary Target**: **Linux on Wayland** using modern compositors with `libinput` (specifically developed and verified on **KDE Plasma 5/6** with `kwin_wayland`).
+> - **Hardware Requirement**: Any laptop equipped with an ALPS DualPoint pointing stick (reporting downward force via kernel `evdev` as `ABS_PRESSURE`, typically discovered as `AlpsPS/2 ALPS DualPoint Stick`).
+> - **X11 / Other Desktops Notice**: Tap-to-click, double-click, and drag gestures work universally across all Linux environments because they rely solely on standard kernel `evdev` and `uinput`. However, middle-button scrolling relies on the compositor's native pointer locking behavior (`scrollOnButtonDown`). If running under standalone X11 without a modern desktop environment, consult the [X11 & Desktop Compatibility Guide](#display-server--desktop-compatibility) below.
 
-### Prerequisites
+---
+
+## Quick Start (3 Steps)
+
+### 1. Build and Install
 
 ```bash
+# Install standard build dependencies (Debian/Ubuntu)
 sudo apt install build-essential gcc
-```
 
-### Build, Test, & Sanitize
-
-Deterministic test suites run without root privileges or hardware access:
-
-```bash
+# Compile and run test suite
 make
 make test
 
-# Run test suites under AddressSanitizer and UndefinedBehaviorSanitizer
-make sanitize
-```
-
-### Install Systemd Service
-
-```bash
+# Install binary to /usr/local/bin and enable systemd service on boot
 sudo make install
 ```
 
-This compiles `bin/alps-stick`, installs the binary to `/usr/local/bin/`, sets up the systemd service at `/etc/systemd/system/alps-stick.service`, and enables it to run on boot.
+### 2. Calibrate to Your Natural Pressure Style
 
-### Interactive Control Center (`-i, --interactive`)
-
-For a unified terminal control center with hardware status, live telemetry HUD, calibration, configuration inspection, and service management:
+Every trackstick sensor and finger has different physical resistance. Launch the interactive Control Center to run the guided 4-phase calibration wizard:
 
 ```bash
-sudo ./bin/alps-stick -i
+sudo alps-stick -i
+```
+Select `1` to run the calibration wizard. It guides you through hands-off resting baseline, single taps, double-clicks, and circle steering, then automatically saves tailored parameters to `/etc/alps-stick.conf` and offers to restart the service.
+
+### 3. Verify Service Status
+
+```bash
+systemctl status alps-stick.service
+```
+
+Tap the rubber nub with your index finger—it now behaves just like a physical left button!
+
+---
+
+## Why This Daemon Exists
+
+Under modern Linux desktop environments, pointing sticks are treated strictly as relative motion pointers (`REL_X`, `REL_Y`). While the kernel's `alps.c` driver reads downward strain-gauge force from the nub and emits it as `ABS_PRESSURE`, modern desktop input stacks (`libinput`) ignore pressure on pointing sticks because tap gestures are traditionally defined only for touchpads.
+
+This daemon bridges that gap completely in userspace:
+1. It connects directly to the pointing stick's `/dev/input/event*` node.
+2. It evaluates pressure dynamics, contact dwell time, velocity memory, and lateral shear.
+3. It emits virtual mouse button down/up events and smooth wheel scrolls via `/dev/uinput`.
+4. It does **not** alter native pointer motion during navigation, fully preserving your desktop environment's pointer acceleration, velocity curves, and sensitivity settings.
+
+---
+
+## Core Capabilities & Technical Details
+
+### 1. Feather-Light Tap-to-Click & Drag Lock
+
+Rather than introducing artificial input lag with delayed confirmation heuristics, the daemon implements an instant, non-blocking transducer:
+
+* **Lightweight Activation Floor ($Z \ge 22$):** Enables gentle, effortless tapping without finger fatigue.
+* **Force-Ratio Discriminator:** Requires $Z \ge \text{motion} \times 1.5$ for any lateral movement $> 6$ counts, distinguishing true downward taps from steering micro-nudges.
+* **Pre-Motion Velocity Memory:** Tracks motion over a decaying 150ms window. If you were steering rapidly across the screen right before pressing the nub, the tap is rejected to prevent accidental misclicks while navigating.
+* **Anti-Drift Snap (Zero Target Slip):** When striking a rubber dome cap, contact shear physically deflects the cursor by 1–3 pixels. Upon lift-off, the daemon emits an equal and opposite relative motion pulse ($-dx, -dy$) in the **exact same `SYN_REPORT` frame** as the click. The cursor snaps back to where your finger originally touched, preventing missed clicks on tiny UI targets.
+* **Zero-Latency Rebound (Tap 2):** Sensitive rebound threshold ($Z \ge 15$) captures natural second strikes, asserting `BTN_LEFT 1` **immediately on touchdown**.
+* **Tap-and-Drag:** Steering ($\ge 6$ counts) locks dragging from millisecond zero. Tilting the stick sideways drops pressure ($Z \to 0$), which is sustained continuously by motion with a 140ms inactivity grace period.
+
+### 2. High-Resolution 2D Kinetic Scrolling
+
+Holding the physical trackstick middle button (`BTN_MIDDLE`) and nudging the stick engages smooth continuous 2D scrolling:
+
+* **Continuous Sub-Pixel Wheel (`REL_WHEEL_HI_RES` / `REL_HWHEEL_HI_RES`):** Emits 120 units per standard detent notch, delivering butter-smooth 60Hz/120Hz kinetic scrolling in modern web browsers, documents, and IDEs.
+* **Dual-Range Progressive Ballistics:** Micro-stepping precision ($|v| \le 2$) for single-line reading, transitioning smoothly into a quadratic power curve ($|v| \ge 3$) for rapid gliding down long files.
+* **Continuous $C^1$ Hermite Angle Blending:** An 8-bit fixed-point cubic Hermite smoothstep filter ($S(t) = 3t^2 - 2t^3$) deadbands lateral tremor while reading vertically, eliminating accidental browser back/forward page navigation. Steering deliberately sideways smoothly opens full 2D diagonal panning without jarring steps.
+* **Clean Event Isolation:** The scroll engine strictly emits wheel events only. It does not inject artificial relative cursor displacements, allowing the display compositor to anchor the pointer rock-solid in place.
+
+---
+
+## Display Server & Desktop Compatibility
+
+### Wayland (KDE Plasma, GNOME, Sway, Hyprland)
+* **Status: Fully Supported & Verified.**
+* Modern Wayland compositors backed by `libinput` natively recognize pointing sticks (`ID_INPUT_POINTINGSTICK=1`) and automatically enable on-button-down scrolling (`scrollOnButtonDown = true` with `scrollButton = 274 / BTN_MIDDLE`).
+* When middle-click scrolling is engaged, the compositor natively locks the pointer on screen while accepting the daemon's high-resolution `REL_WHEEL_HI_RES` stream.
+
+### X11 & Standalone Window Managers (i3, bspwm, Openbox)
+* **Status: Supported with Standard Configuration.**
+* Tap gestures, double-clicks, and dragging work identically out of the box.
+* For middle-button scrolling, ensure that `libinput` manages your trackstick with button scrolling enabled so the X server suppresses cursor movement during scroll. You can verify this using `xinput`:
+  ```bash
+  # Check if libinput button scrolling is enabled on your stick
+  xinput list-props "AlpsPS/2 ALPS DualPoint Stick" | grep -i "scroll method"
+  
+  # Enable on-button-down scroll method if disabled (0, 0, 1 = Button Scrolling)
+  xinput set-prop "AlpsPS/2 ALPS DualPoint Stick" "libinput Scroll Method Enabled" 0 0 1
+  ```
+* If you prefer pure native desktop scrolling without the daemon's 2D kinetic ballistics engine, you can simply set `enabled = false` under `[scroll]` in `/etc/alps-stick.conf`.
+
+---
+
+## Interactive Tooling
+
+### Control Center (`-i, --interactive`)
+Run the unified C terminal dashboard to manage all daemon features in one place:
+```bash
+sudo alps-stick -i
+```
+```text
+====================================================
+   ALPS Trackstick Daemon - Control Center (v0.9.1)
+====================================================
+  1) Run Guided Calibration Wizard (4-Phase)
+  2) Live Diagnostic Sensor HUD (Z-force & shear telemetry)
+  3) Reset Configuration to Factory Defaults
+  4) Restart Daemon Service (systemctl restart alps-stick)
+  5) View Current Configuration (/etc/alps-stick.conf)
+  0) Exit
+====================================================
 ```
 
 ### Guided Physical Calibration Wizard (`-C, --calibrate`)
+Profiles your individual strain-gauge sensor across 4 paced phases:
+1. **Quiescent Resting Baseline**: Samples hands-off noise floor for 2.0 seconds (press Enter when ready).
+2. **Natural Single Taps**: Measures peak contact force, dwell duration, and shear slip across 5 taps (with retry option).
+3. **Double-Click Cadence**: Measures second-strike rebound force loss and cadence gap across 3 double-clicks.
+4. **Steering Shear Profile**: Explains circle navigation, waits for finger placement, counts down `3... 2... 1... GO!`, and measures navigation shear limits.
+Automatically computes optimal thresholds and saves them to `/etc/alps-stick.conf`.
 
-To automatically profile your trackstick's strain-gauge sensor and generate tailored physical parameters for your natural clicking rhythm:
-
+### Factory Reset (`-R, --reset-config`)
+Restores clean, documented factory default configuration:
 ```bash
-sudo ./bin/alps-stick --calibrate
+sudo alps-stick --reset-config
 ```
 
-The user-paced calibration wizard walks through 4 distinct steps:
-1. **Resting Baseline & Noise Floor**: Samples quiescent transducer state for 2 seconds (starts only when you press Enter).
-2. **Natural Single Taps**: Records 5 natural tap strikes (with optional retry) to determine peak force and contact dwell time.
-3. **Double-Click Cadence & Rebound**: Measures 3 double-clicks (with optional retry) to calculate cadence gap and rebound strike force.
-4. **Steering Shear Profile**: Explains navigation steering, waits for you to place your finger, gives a 3-2-1 countdown, and measures 3 seconds of continuous circle steering.
+---
 
-Upon completion, you can save the settings to `/etc/alps-stick.conf` (with automatic service restart), retry, or reset to factory defaults.
+## Configuration Reference (`/etc/alps-stick.conf`)
 
-### Resetting Configuration to Defaults
+Physical parameters can be tuned in `/etc/alps-stick.conf` or overridden at runtime via CLI arguments:
 
-To quickly restore `/etc/alps-stick.conf` to clean, documented factory defaults:
+```ini
+[general]
+# Enable live gesture telemetry to stdout / journal
+verbose = false
 
-```bash
-sudo ./bin/alps-stick --reset-config
+# Optional libinput pointer speed override [-1.0 to 1.0].
+# Unset by default to preserve native desktop environment (KDE/GNOME) settings.
+# pointer_speed = 0.0
+
+[tap]
+# Initial tap activation pressure threshold [1..255] (default: 22)
+tap1_pressure = 22
+
+# Sensitive rebound threshold [1..255] for rapid double clicks (default: 15)
+tap2_pressure = 15
+
+# Mechanical unload baseline [0..255] where finger contact is released (default: 10)
+release_pressure = 10
+
+# Maximum contact duration in milliseconds for an impulse tap (default: 180 ms)
+tap_duration_ms = 180
+
+# Maximum permitted lateral shear motion counts during a tap (default: 16)
+tap_motion = 16
+
+# Primed double-tap recognition window in milliseconds (default: 260 ms)
+double_tap_window_ms = 260
+
+# Lateral motion threshold on Tap 2 that locks into active dragging (default: 6)
+drag_start_motion = 6
+
+# Inactivity grace window in milliseconds before dropping an active drag (default: 140 ms)
+drag_release_grace_ms = 140
+
+# Reverse contact-shear snap on tap release to counteract finger bounce (default: true)
+anti_drift = true
+
+[scroll]
+# Enable 2D kinetic scrolling using physical middle-button hold (default: true)
+enabled = true
+
+# Base high-resolution scroll units per motion count [1..60] (default: 12)
+hires_multiplier = 12
+
+# Enable dual-range progressive quadratic ballistics acceleration (default: true)
+progressive = true
+
+# Acceleration power factor for progressive curve [0..20] (default: 6)
+accel_factor = 6
+
+# Enable continuous C^1 Hermite angle blending and vector cone deadband (default: true)
+axis_lock = true
 ```
 
-### Runtime CLI Options
+---
 
-All physical thresholds and wheel behaviors can be tuned at runtime or configured via `/etc/alps-stick.conf`:
+## Command-Line Usage
 
 ```text
-Usage: ./bin/alps-stick [OPTIONS]
+Usage: alps-stick [OPTIONS]
 
 General Options:
   -c, --config <path>          Path to configuration file (default: /etc/alps-stick.conf)
-  -C, --calibrate              Launch interactive terminal force calibration wizard
+  -i, --interactive            Open unified interactive terminal Control Center
+  -C, --calibrate              Launch guided 4-phase physical calibration wizard
   -R, --reset-config           Reset configuration file to factory defaults and exit
   -f, --force                  Bypass confirmation prompts for destructive operations
   -v, --verbose                Enable live gesture telemetry and state logging
   -s, --speed <float>          Override libinput pointer speed [-1.0 to 1.0]
-                               (Default: unset — preserves native OS/KDE settings)
   -h, --help                   Show this help message and exit
       --version                Show version information and exit
 
@@ -174,12 +232,15 @@ Transducer Calibration Options:
 
 2D Kinetic Scroll Options:
       --no-scroll              Disable middle-button trackstick scrolling
-      --scroll-speed <mult>    Hi-res units per count [1..120] (default: 15)
-      --no-axis-lock           Disable cross-axis deadband (allow free 2D diagonal)
-      --no-scroll-counter-drift Allow cursor to move freely during scroll
+      --scroll-speed <mult>    Hi-res units per count [1..60] (default: 12)
+      --linear-scroll          Disable progressive ballistics (force linear scaling)
+      --scroll-accel <power>   Progressive acceleration power factor [0..20] (default: 6)
+      --no-axis-lock           Disable cross-axis deadband (allow raw 2D diagonal)
 ```
 
-### Service Management
+---
+
+## Service Management
 
 ```bash
 # Check service status
@@ -187,13 +248,21 @@ systemctl status alps-stick.service
 
 # View live daemon logs
 journalctl -u alps-stick.service -f
+
+# Restart service after editing /etc/alps-stick.conf
+sudo systemctl restart alps-stick.service
 ```
+
+---
 
 ## Uninstallation
 
+To completely remove the daemon and service:
 ```bash
 sudo make uninstall
 ```
+
+---
 
 ## License
 
