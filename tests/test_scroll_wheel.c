@@ -10,8 +10,9 @@
  * 5. Linear scroll fallback when progressive mode is toggled off.
  * 6. Transient mid-drag direction transitions (vertical -> horizontal -> vertical).
  * 7. Simultaneous 2D diagonal panning when steering diagonally.
- * 8. Discrete legacy detent notch accumulation (120 hi-res units = 1 notch).
- * 9. Feature toggle disabling scroll when configured off.
+ * 8. Continuous C^1 Hermite angle blending during diagonal transitions.
+ * 9. Discrete legacy detent notch accumulation (120 hi-res units = 1 notch).
+ * 10. Feature toggle disabling scroll when configured off.
  */
 
 #include <stdio.h>
@@ -198,6 +199,36 @@ static void test_true_diagonal_simultaneous_panning(void) {
     printf("  [PASS] test_true_diagonal_simultaneous_panning\n");
 }
 
+static void test_continuous_hermite_angle_blending(void) {
+    alps_config_t cfg;
+    alps_config_init_defaults(&cfg);
+
+    alps_scroll_wheel_t ctx;
+    alps_scroll_wheel_init(&ctx);
+
+    /* Engage scroll */
+    alps_event_t ev = make_ev(ALPS_EV_BTN_MIDDLE, 1, 6500);
+    alps_scroll_wheel_process_event(&ctx, &cfg.scroll, &ev, 0);
+
+    /* Test 1: dx = 3, dy = -6 (ratio 1:2 -> exactly t = 0.5 in Hermite ramp)
+     * Vertical dominant: dy = -6 gives hires = 96
+     * Lateral cross: dx = 3 at t = 0.5 has S(0.5) = 0.5 -> eff_x = (3*128 + 128)/256 = 2
+     * Ballistics for eff_x = 2: 2 * 12 = 24 */
+    alps_action_t act = alps_scroll_wheel_process_frame(&ctx, &cfg.scroll, 3, -6, 0);
+    assert(act.type == ALPS_ACTION_SCROLL);
+    assert(act.wheel_v_hires == 96);
+    assert(act.wheel_h_hires == 24);
+
+    /* Test 2: dx = -6, dy = 3 (horizontal dominant, ratio 1:2 -> exactly t = 0.5)
+     * eff_y = -2, wheel_v_hires = -24, wheel_h_hires = -96 */
+    act = alps_scroll_wheel_process_frame(&ctx, &cfg.scroll, -6, 3, 0);
+    assert(act.type == ALPS_ACTION_SCROLL);
+    assert(act.wheel_h_hires == -96);
+    assert(act.wheel_v_hires == -24);
+
+    printf("  [PASS] test_continuous_hermite_angle_blending\n");
+}
+
 static void test_legacy_detent_accumulation(void) {
     alps_config_t cfg;
     alps_config_init_defaults(&cfg);
@@ -248,8 +279,9 @@ int main(void) {
     test_linear_scroll_fallback();
     test_transient_mid_drag_direction_transition();
     test_true_diagonal_simultaneous_panning();
+    test_continuous_hermite_angle_blending();
     test_legacy_detent_accumulation();
     test_scroll_disabled_configuration();
-    printf("All 9 scroll wheel test suites passed!\n");
+    printf("All 10 scroll wheel test suites passed!\n");
     return 0;
 }

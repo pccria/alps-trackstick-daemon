@@ -1,6 +1,7 @@
 /**
  * @file scroll_wheel.c
- * @brief Implementation of the 2D kinetic trackstick scroll wheel state machine with progressive ballistics.
+ * @brief Implementation of the 2D kinetic trackstick scroll wheel state machine with progressive ballistics
+ *        and continuous C^1 Hermite angle blending.
  */
 
 #include "features/scroll_wheel.h"
@@ -61,6 +62,52 @@ static int32_t compute_ballistics(int32_t step, int base_mult, int progressive, 
     return sign * hires;
 }
 
+/**
+ * @brief Computes continuous Hermite smoothstep weight [0..256] for cross-axis blending.
+ *
+ * Implements S(t) = 3t^2 - 2t^3 in 8-bit fixed-point arithmetic:
+ * - When cross/dominant <= 1/3 (angle within ~18 deg of primary axis):
+ *   weight = 0 (100% tremor suppression, preventing accidental browser navigation).
+ * - When cross/dominant >= 2/3 (angle within ~34 deg of diagonal):
+ *   weight = 256 (100% unconstrained 2D diagonal transmission).
+ * - Intermediate zone (1/3 < cross/dominant < 2/3):
+ *   C^1 mathematically continuous Hermite ramp without step-discontinuities.
+ *
+ * @param cross     Cross-axis absolute magnitude (|dx| or |dy|).
+ * @param dominant  Dominant-axis absolute magnitude (must be >= cross).
+ * @return Fixed-point weight in range [0..256] where 256 = 1.0 (100% transmission).
+ */
+static int32_t compute_smooth_weight_fp(int32_t cross, int32_t dominant) {
+    if (dominant <= 0) return 256;
+
+    /* Lower deadband threshold: 3 * cross <= dominant -> weight = 0 */
+    if (3 * cross <= dominant) {
+        return 0;
+    }
+
+    /* Upper full-transmission threshold: 3 * cross >= 2 * dominant -> weight = 256 */
+    if (3 * cross >= 2 * dominant) {
+        return 256;
+    }
+
+    /* Normalized parameter t in [0..256] = 256 * (3*cross - dominant) / dominant */
+    int32_t num = 3 * cross - dominant;
+    int32_t t_fp = (num * 256) / dominant;
+    if (t_fp < 0) t_fp = 0;
+    if (t_fp > 256) t_fp = 256;
+
+    /* Fixed-point cubic Hermite smoothstep: S(t) = t^2 * (3 - 2t)
+     * t2 scale is 2^8, term scale is 2^8, product scale is 2^16.
+     * Shift right by 8 to yield result at 2^8 (scale 256). */
+    int32_t t2 = (t_fp * t_fp) >> 8;
+    int32_t term = (3 * 256) - (2 * t_fp);
+    int32_t s_fp = (t2 * term) >> 8;
+
+    if (s_fp < 0) s_fp = 0;
+    if (s_fp > 256) s_fp = 256;
+    return s_fp;
+}
+
 alps_action_t alps_scroll_wheel_process_frame(alps_scroll_wheel_t *ctx,
                                               const alps_scroll_config_t *cfg,
                                               int32_t dx,
@@ -82,17 +129,18 @@ alps_action_t alps_scroll_wheel_process_frame(alps_scroll_wheel_t *ctx,
     int32_t eff_x = dx;
     int32_t eff_y = dy;
 
-    /* Continuous Transient Vector Cone Filtering:
-     * Evaluated instantaneously per frame without sticky latching. */
-    if (cfg->axis_lock_enabled && cfg->dominance_ratio > 0) {
-        if (abs_y >= cfg->dominance_ratio * abs_x) {
-            /* Predominantly vertical: dampen lateral tremor */
-            eff_x = 0;
-        } else if (abs_x >= cfg->dominance_ratio * abs_y) {
-            /* Predominantly horizontal: dampen vertical tremor */
-            eff_y = 0;
+    /* Continuous C^1 Trigonometric Vector Cone Filtering:
+     * Eliminates step-discontinuities when curving mid-drag between axes. */
+    if (cfg->axis_lock_enabled) {
+        if (abs_y >= abs_x) {
+            /* Vertical dominant: smoothly filter lateral component */
+            int32_t weight = compute_smooth_weight_fp(abs_x, abs_y);
+            eff_x = (dx * weight + (dx >= 0 ? 128 : -128)) / 256;
+        } else {
+            /* Horizontal dominant: smoothly filter vertical component */
+            int32_t weight = compute_smooth_weight_fp(abs_y, abs_x);
+            eff_y = (dy * weight + (dy >= 0 ? 128 : -128)) / 256;
         }
-        /* Else: true diagonal panning (both eff_x and eff_y retained) */
     }
 
     /* Direction mapping:
