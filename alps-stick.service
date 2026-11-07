@@ -1,0 +1,12 @@
+[Unit]
+Description=ALPS DualPoint Stick Native C Gesture Daemon
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/alps-stick --speed 0.8
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
