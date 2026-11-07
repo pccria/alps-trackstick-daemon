@@ -843,20 +843,22 @@ int alps_calibrate_run(const alps_config_t *cfg) {
     printf("  tap_motion = %d\n", prof.rec_tap_motion);
     printf("  double_tap_window_ms = %u\n\n", prof.rec_double_window_ms);
 
-    int do_save = 0;
+    int action = 0; /* 0: do nothing, 1: save calibrated, 2: reset defaults */
     if (isatty(STDIN_FILENO)) {
-        printf("Apply and save these calibrated settings to %s? [Y/n]: ", target_config_path);
+        printf("Apply settings to %s? [Y]es (save) / [n]o / [r]eset to defaults: ", target_config_path);
         fflush(stdout);
         char ans[64];
         if (fgets(ans, sizeof(ans), stdin)) {
             char *p = cal_trim_whitespace(ans);
             if (*p == '\0' || *p == 'y' || *p == 'Y') {
-                do_save = 1;
+                action = 1;
+            } else if (*p == 'r' || *p == 'R') {
+                action = 2;
             }
         }
     }
 
-    if (do_save) {
+    if (action == 1) {
         int res = alps_calibrate_save_config(target_config_path, &prof);
         if (res == 0) {
             printf("\n✓ Successfully updated %s!\n", target_config_path);
@@ -876,6 +878,27 @@ int alps_calibrate_run(const alps_config_t *cfg) {
             }
         } else {
             printf("\nError: Failed to save configuration to %s (code %d).\n\n", target_config_path, res);
+        }
+    } else if (action == 2) {
+        int rst_res = alps_config_reset_file(target_config_path);
+        if (rst_res == 0) {
+            printf("\n✓ Successfully restored %s to factory defaults!\n", target_config_path);
+            printf("To activate defaults immediately, run:\n");
+            printf("  sudo systemctl restart alps-stick\n\n");
+        } else if (rst_res == -2) {
+            printf("\nNotice: Permission denied writing directly to %s.\n", target_config_path);
+            const char *fallback_path = "/tmp/alps-stick.conf";
+            int fb_res = alps_config_reset_file(fallback_path);
+            if (fb_res == 0) {
+                printf("Default configuration written to %s.\n\n", fallback_path);
+                printf("To apply permanently to your system, run:\n");
+                printf("  sudo cp %s %s\n", fallback_path, target_config_path);
+                printf("  sudo systemctl restart alps-stick\n\n");
+            } else {
+                printf("Failed to write to %s as well (code %d).\n\n", fallback_path, fb_res);
+            }
+        } else {
+            printf("\nError: Failed to reset configuration at %s (code %d).\n\n", target_config_path, rst_res);
         }
     } else if (isatty(STDIN_FILENO)) {
         printf("\nSettings not saved. You may manually copy the [tap] block above into %s.\n\n",

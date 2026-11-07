@@ -175,12 +175,87 @@ static void test_boolean_flexibility(void) {
     printf("  [PASS] test_boolean_flexibility\n");
 }
 
+static void test_config_reset_file(void) {
+    char tmp_path[] = "/tmp/alps_test_reset_XXXXXX";
+    int fd = mkstemp(tmp_path);
+    assert(fd >= 0);
+
+    /* Write heavily customized settings */
+    const char *custom =
+        "[general]\n"
+        "verbose = 1\n"
+        "[tap]\n"
+        "tap1_pressure = 85\n"
+        "tap2_pressure = 70\n"
+        "release_pressure = 45\n"
+        "[scroll]\n"
+        "hires_multiplier = 40\n"
+        "progressive = false\n";
+    ssize_t written = write(fd, custom, strlen(custom));
+    assert(written == (ssize_t)strlen(custom));
+    close(fd);
+
+    /* Verify custom settings load */
+    alps_config_t cfg;
+    alps_config_init_defaults(&cfg);
+    int rc = alps_config_load_file(&cfg, tmp_path, 1);
+    assert(rc == 0);
+    assert(cfg.tap.tap1_pressure == 85);
+    assert(cfg.scroll.hires_multiplier == 40);
+
+    /* Execute reset to factory defaults */
+    rc = alps_config_reset_file(tmp_path);
+    assert(rc == 0);
+
+    /* Reload and confirm factory defaults are restored */
+    alps_config_t rst_cfg;
+    alps_config_init_defaults(&rst_cfg);
+    rc = alps_config_load_file(&rst_cfg, tmp_path, 1);
+    assert(rc == 0);
+    assert(rst_cfg.verbose == 0);
+    assert(rst_cfg.tap.tap1_pressure == ALPS_DEFAULT_TAP1_PRESSURE);
+    assert(rst_cfg.tap.tap2_rebound_pressure == ALPS_DEFAULT_TAP2_REBOUND_PRESSURE);
+    assert(rst_cfg.tap.release_pressure == ALPS_DEFAULT_RELEASE_PRESSURE);
+    assert(rst_cfg.tap.max_tap_duration_ms == ALPS_DEFAULT_MAX_TAP_DURATION_MS);
+    assert(rst_cfg.tap.max_tap_motion == ALPS_DEFAULT_MAX_TAP_MOTION);
+    assert(rst_cfg.tap.double_tap_window_ms == ALPS_DEFAULT_DOUBLE_TAP_WINDOW_MS);
+    assert(rst_cfg.tap.anti_drift_enabled == 1);
+    assert(rst_cfg.scroll.enabled == ALPS_DEFAULT_SCROLL_ENABLED);
+    assert(rst_cfg.scroll.hires_multiplier == ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER);
+    assert(rst_cfg.scroll.progressive_enabled == ALPS_DEFAULT_SCROLL_PROGRESSIVE);
+    assert(rst_cfg.scroll.accel_factor == ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
+    assert(rst_cfg.scroll.axis_lock_enabled == ALPS_DEFAULT_SCROLL_AXIS_LOCK);
+    assert(rst_cfg.scroll.counter_drift_enabled == ALPS_DEFAULT_SCROLL_COUNTER_DRIFT);
+
+    unlink(tmp_path);
+
+    /* Test reset on non-existent file creates fresh default template */
+    const char *fresh_path = "/tmp/alps_test_reset_fresh_target.conf";
+    unlink(fresh_path);
+    rc = alps_config_reset_file(fresh_path);
+    assert(rc == 0);
+
+    alps_config_t fresh_cfg;
+    alps_config_init_defaults(&fresh_cfg);
+    rc = alps_config_load_file(&fresh_cfg, fresh_path, 1);
+    assert(rc == 0);
+    assert(fresh_cfg.tap.tap1_pressure == ALPS_DEFAULT_TAP1_PRESSURE);
+    unlink(fresh_path);
+
+    /* Test unwritable/invalid path error handling */
+    rc = alps_config_reset_file("/proc/sys/alps_invalid_target.conf");
+    assert(rc == -2 || rc == -1);
+
+    printf("  [PASS] test_config_reset_file\n");
+}
+
 int main(void) {
     printf("Running ALPS Trackstick Configuration File Unit Tests (v%s)...\n", ALPS_DAEMON_VERSION);
     test_missing_config_file();
     test_parse_valid_config_file();
     test_config_precedence_cli_overrides_file();
     test_boolean_flexibility();
-    printf("All 4 config file test suites passed!\n");
+    test_config_reset_file();
+    printf("All 5 config file test suites passed!\n");
     return 0;
 }

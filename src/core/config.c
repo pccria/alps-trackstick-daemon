@@ -11,12 +11,16 @@
 #include <strings.h>
 #include <ctype.h>
 #include <errno.h>
+#include <time.h>
+#include <unistd.h>
 
 void alps_config_init_defaults(alps_config_t *cfg) {
     if (!cfg) return;
 
     cfg->verbose = 0;
     cfg->calibrate_mode = 0;
+    cfg->reset_config_mode = 0;
+    cfg->force_mode = 0;
     snprintf(cfg->config_path, sizeof(cfg->config_path), "%s", ALPS_DEFAULT_CONFIG_PATH);
     cfg->explicit_config = 0;
     cfg->pointer_speed = ALPS_POINTER_SPEED_UNSET;
@@ -225,6 +229,8 @@ void alps_config_print_help(const char *prog_name) {
     printf("  -c, --config <path>          Path to configuration file (default: %s)\n",
            ALPS_DEFAULT_CONFIG_PATH);
     printf("  -C, --calibrate              Launch interactive terminal force calibration wizard\n");
+    printf("  -R, --reset-config           Reset configuration file to factory defaults and exit\n");
+    printf("  -f, --force                  Bypass confirmation prompts for destructive operations\n");
     printf("  -v, --verbose                Enable live gesture telemetry and state logging\n");
     printf("  -s, --speed <float>          Override libinput pointer speed [-1.0 to 1.0]\n");
     printf("                               (Default: unset — preserves native OS/KDE settings)\n");
@@ -272,6 +278,10 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             cfg->explicit_config = 1;
         } else if (strcmp(argv[i], "-C") == 0 || strcmp(argv[i], "--calibrate") == 0) {
             cfg->calibrate_mode = 1;
+        } else if (strcmp(argv[i], "-R") == 0 || strcmp(argv[i], "--reset-config") == 0) {
+            cfg->reset_config_mode = 1;
+        } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
+            cfg->force_mode = 1;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             cfg->verbose = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -363,6 +373,83 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             fprintf(stderr, "Error: Unknown option '%s' (see --help)\n", argv[i]);
             return -1;
         }
+    }
+
+    return 0;
+}
+
+int alps_config_reset_file(const char *path) {
+    const char *target = (path && path[0] != '\0') ? path : ALPS_DEFAULT_CONFIG_PATH;
+
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", target);
+
+    FILE *out = fopen(tmp_path, "w");
+    if (!out) {
+        if (errno == EACCES || errno == EPERM) return -2;
+        return -1;
+    }
+
+    time_t now = time(NULL);
+    char time_str[64] = {0};
+    struct tm tm_buf;
+    if (localtime_r(&now, &tm_buf)) {
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &tm_buf);
+    }
+
+    fprintf(out, "# ==============================================================================\n");
+    fprintf(out, "# ALPS DualPoint Trackstick Daemon Configuration\n");
+    fprintf(out, "# Restored to Factory Defaults on %s\n", time_str[0] ? time_str : "auto");
+    fprintf(out, "# Location: %s\n", target);
+    fprintf(out, "# ==============================================================================\n\n");
+
+    fprintf(out, "[general]\n");
+    fprintf(out, "# Enable live gesture telemetry and state logging to stdout/journal.\n");
+    fprintf(out, "verbose = false\n\n");
+    fprintf(out, "# Override libinput pointer acceleration speed [-1.0 to 1.0].\n");
+    fprintf(out, "# Unset by default to preserve native desktop environment (KDE/GNOME) settings.\n");
+    fprintf(out, "# pointer_speed = 0.0\n\n");
+
+    fprintf(out, "[tap]\n");
+    fprintf(out, "# Initial tap activation pressure threshold [1..255] (default: %d).\n", ALPS_DEFAULT_TAP1_PRESSURE);
+    fprintf(out, "tap1_pressure = %d\n\n", ALPS_DEFAULT_TAP1_PRESSURE);
+    fprintf(out, "# Sensitive rebound threshold [1..255] for rapid double clicks (default: %d).\n", ALPS_DEFAULT_TAP2_REBOUND_PRESSURE);
+    fprintf(out, "tap2_pressure = %d\n\n", ALPS_DEFAULT_TAP2_REBOUND_PRESSURE);
+    fprintf(out, "# Mechanical unload baseline [0..255] where finger contact is released (default: %d).\n", ALPS_DEFAULT_RELEASE_PRESSURE);
+    fprintf(out, "release_pressure = %d\n\n", ALPS_DEFAULT_RELEASE_PRESSURE);
+    fprintf(out, "# Maximum contact duration in milliseconds for an impulse tap (default: %u ms).\n", ALPS_DEFAULT_MAX_TAP_DURATION_MS);
+    fprintf(out, "tap_duration_ms = %u\n\n", ALPS_DEFAULT_MAX_TAP_DURATION_MS);
+    fprintf(out, "# Maximum permitted lateral shear motion counts during a tap (default: %d).\n", ALPS_DEFAULT_MAX_TAP_MOTION);
+    fprintf(out, "tap_motion = %d\n\n", ALPS_DEFAULT_MAX_TAP_MOTION);
+    fprintf(out, "# Primed double-tap recognition window in milliseconds (default: %u ms).\n", ALPS_DEFAULT_DOUBLE_TAP_WINDOW_MS);
+    fprintf(out, "double_tap_window_ms = %u\n\n", ALPS_DEFAULT_DOUBLE_TAP_WINDOW_MS);
+    fprintf(out, "# Lateral motion threshold on Tap 2 that locks into active dragging (default: %d).\n", ALPS_DEFAULT_DRAG_START_MOTION);
+    fprintf(out, "drag_start_motion = %d\n\n", ALPS_DEFAULT_DRAG_START_MOTION);
+    fprintf(out, "# Inactivity grace window in milliseconds before dropping an active drag (default: %u ms).\n", ALPS_DEFAULT_DRAG_RELEASE_GRACE_MS);
+    fprintf(out, "drag_release_grace_ms = %u\n\n", ALPS_DEFAULT_DRAG_RELEASE_GRACE_MS);
+    fprintf(out, "# Reverse contact-shear snap on tap release to counteract finger bounce (default: true).\n");
+    fprintf(out, "anti_drift = true\n\n");
+
+    fprintf(out, "[scroll]\n");
+    fprintf(out, "# Enable 2D kinetic scrolling using physical middle-button hold (default: true).\n");
+    fprintf(out, "enabled = %s\n\n", ALPS_DEFAULT_SCROLL_ENABLED ? "true" : "false");
+    fprintf(out, "# Base high-resolution scroll units per motion count [1..60] (default: %d).\n", ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER);
+    fprintf(out, "hires_multiplier = %d\n\n", ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER);
+    fprintf(out, "# Enable dual-range progressive quadratic ballistics acceleration (default: true).\n");
+    fprintf(out, "progressive = %s\n\n", ALPS_DEFAULT_SCROLL_PROGRESSIVE ? "true" : "false");
+    fprintf(out, "# Acceleration power factor for progressive curve [0..20] (default: %d).\n", ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
+    fprintf(out, "accel_factor = %d\n\n", ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
+    fprintf(out, "# Enable continuous C^1 Hermite angle blending and vector cone deadband (default: true).\n");
+    fprintf(out, "axis_lock = %s\n\n", ALPS_DEFAULT_SCROLL_AXIS_LOCK ? "true" : "false");
+    fprintf(out, "# Lock cursor position with (-dx, -dy) counter-drift during scroll (default: true).\n");
+    fprintf(out, "counter_drift = %s\n", ALPS_DEFAULT_SCROLL_COUNTER_DRIFT ? "true" : "false");
+
+    fclose(out);
+
+    if (rename(tmp_path, target) != 0) {
+        unlink(tmp_path);
+        if (errno == EACCES || errno == EPERM) return -2;
+        return -1;
     }
 
     return 0;

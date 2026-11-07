@@ -125,7 +125,15 @@ The guided 4-phase calibration wizard walks through:
 3. **Double-Click Cadence & Rebound**: Measures 3 double-clicks to calculate rebound strike force and inter-tap cadence gap.
 4. **Steering Shear Profile**: Profiles 3 seconds of active navigation to establish the boundary between tap strikes and deliberate cursor steering.
 
-Upon completion, optimal parameters are derived and can be automatically saved directly into `/etc/alps-stick.conf`.
+Upon completion, optimal parameters are derived and can be automatically saved directly into `/etc/alps-stick.conf`, or reset back to factory defaults.
+
+### Resetting Configuration to Defaults
+
+To quickly restore `/etc/alps-stick.conf` to clean, documented factory defaults:
+
+```bash
+sudo ./bin/alps-stick --reset-config
+```
 
 ### Runtime CLI Options
 
@@ -137,6 +145,8 @@ Usage: ./bin/alps-stick [OPTIONS]
 General Options:
   -c, --config <path>          Path to configuration file (default: /etc/alps-stick.conf)
   -C, --calibrate              Launch interactive terminal force calibration wizard
+  -R, --reset-config           Reset configuration file to factory defaults and exit
+  -f, --force                  Bypass confirmation prompts for destructive operations
   -v, --verbose                Enable live gesture telemetry and state logging
   -s, --speed <float>          Override libinput pointer speed [-1.0 to 1.0]
                                (Default: unset — preserves native OS/KDE settings)

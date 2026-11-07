@@ -146,13 +146,56 @@ int main(int argc, char *argv[]) {
     alps_config_t cfg;
     alps_config_init_defaults(&cfg);
 
-    /* First pass: inspect for -c / --config or -h / --help / --version */
+    /* First pass: inspect for -c / --config, -R / --reset-config, -f / --force, -h / --help, --version */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
             if (i + 1 < argc) {
                 snprintf(cfg.config_path, sizeof(cfg.config_path), "%s", argv[i + 1]);
                 cfg.explicit_config = 1;
             }
+        } else if (strcmp(argv[i], "-R") == 0 || strcmp(argv[i], "--reset-config") == 0) {
+            cfg.reset_config_mode = 1;
+        } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
+            cfg.force_mode = 1;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            alps_config_print_help(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            printf("alps-stick v%s\n", ALPS_DAEMON_VERSION);
+            return 0;
+        }
+    }
+
+    if (cfg.reset_config_mode) {
+        if (!cfg.force_mode && isatty(STDIN_FILENO)) {
+            printf("Reset configuration file '%s' to factory defaults? [y/N]: ", cfg.config_path);
+            fflush(stdout);
+            char ans[64];
+            if (!fgets(ans, sizeof(ans), stdin)) {
+                printf("\nCancelled.\n");
+                return 0;
+            }
+            char *p = ans;
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p != 'y' && *p != 'Y') {
+                printf("Operation cancelled. Configuration file untouched.\n");
+                return 0;
+            }
+        }
+
+        int rc = alps_config_reset_file(cfg.config_path);
+        if (rc == 0) {
+            printf("✓ Successfully restored '%s' to factory defaults.\n", cfg.config_path);
+            printf("To activate changes immediately, run:\n");
+            printf("  sudo systemctl restart alps-stick\n");
+            return 0;
+        } else if (rc == -2) {
+            fprintf(stderr, "Error: Permission denied writing to '%s'.\n", cfg.config_path);
+            fprintf(stderr, "Run with root privileges: sudo alps-stick --reset-config\n");
+            return 1;
+        } else {
+            fprintf(stderr, "Error: Failed to reset configuration file '%s' (I/O error).\n", cfg.config_path);
+            return 1;
         }
     }
 

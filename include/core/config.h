@@ -82,6 +82,8 @@ typedef struct {
 typedef struct {
     int verbose;                     /**< Enable live gesture telemetry and state transition logging */
     int calibrate_mode;              /**< Non-zero to enter interactive calibration terminal wizard */
+    int reset_config_mode;           /**< Non-zero to reset configuration file to factory defaults */
+    int force_mode;                  /**< Non-zero to bypass interactive confirmation prompts */
     char config_path[512];           /**< Path to configuration file (default: /etc/alps-stick.conf) */
     int explicit_config;             /**< Non-zero if config_path was explicitly set via CLI */
     float pointer_speed;             /**< Optional xinput accel speed [-1.0, 1.0], or ALPS_POINTER_SPEED_UNSET */
@@ -134,5 +136,15 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]);
  * @param prog_name Executable name (`argv[0]`).
  */
 void alps_config_print_help(const char *prog_name);
+
+/**
+ * @brief Overwrites a configuration file with clean factory default parameters and documentation.
+ *
+ * Performs an atomic write via temporary file and rename.
+ *
+ * @param path Target configuration file path (NULL or empty string for default `/etc/alps-stick.conf`).
+ * @return 0 on success, -1 on I/O error, -2 on permission denied.
+ */
+int alps_config_reset_file(const char *path);
 
 #endif /* ALPS_CORE_CONFIG_H */
