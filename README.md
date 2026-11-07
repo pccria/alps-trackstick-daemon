@@ -8,31 +8,34 @@ Under modern Linux desktop environments (Wayland/X11 with `libinput`), trackstic
 
 This daemon runs in the background, connects to the raw `/dev/input/event*` node of the ALPS pointing stick, tracks contact dynamics through a low-latency state machine, and emits clean `BTN_LEFT` clicks via `/dev/uinput` with zero CPU busy-polling.
 
-## Architecture: Physical Virtual Transducer
+## Architecture: Anti-Drift Physical Transducer
 
-Rather than attempting to guess user intent through delayed confirmation heuristics, `v0.3.1` implements a zero-latency **Physical Virtual Transducer**:
+Rather than attempting to guess user intent through delayed confirmation heuristics, `v0.4.0` implements an **Anti-Drift Physical Transducer**:
 
-1. **Lift-Off Gated Single Click (Tap 1):**
-   * Contact trigger: downward pressure $Z \ge 28$ (raised from 22 to eliminate misclicks while navigating).
-   * Release: $Z \le 10$ within 180ms with lateral shear $\le 18$ counts (tightened from 30).
-   * Emits a clean discrete `BTN_LEFT` pulse (15ms hold), perfectly registered by X11/Wayland event loops.
-   * Primes a 260ms window for Tap 2.
+1. **Light, Smooth Tap Activation ($Z \ge 22$):**
+   * Lowers the contact floor back down to $Z=22$, restoring gentle, effortless, smooth tapping (no hard whacking required).
+   * **Physical Discriminator:** Requires $Z \ge \text{motion} \times 1.5$ for any lateral movement $> 6$ counts, distinguishing true downward taps from steering micro-nudges.
 
-2. **Immediate Virtual Button Down on Second Contact (Tap 2):**
-   * Sensitive rebound threshold ($Z \ge 18$) captures natural second strikes without false triggers.
+2. **Anti-Drift Snap (Zero Target Slip):**
+   * When an index finger strikes a flexible rubber dome, contact shear physically deflects the pointer by a few pixels ($dx, dy$).
+   * Upon lift-off, the daemon emits an equal and opposite relative motion pulse ($-dx, -dy$) via `uinput` in the **exact same event frame** as the click.
+   * The cursor snaps right back to the pre-tap coordinate before the click lands, completely eliminating cursor slip!
+
+3. **Immediate Virtual Button Down on Second Contact (Tap 2):**
+   * Sensitive rebound threshold ($Z \ge 15$) captures natural second strikes without false triggers.
    * Emits `BTN_LEFT 1` **immediately on touchdown**.
-   * **Double-Click:** If the finger lifts off within 180ms without lateral motion ($< 6$ counts), `BTN_LEFT 0` fires immediately. The desktop compositor registers a native, lag-free double click.
-   * **Tap-and-Drag:** If the stick is steered laterally ($\ge 6$ counts, down from 15) or held stationary ($\ge 160\text{ms}$), drag lock engages instantly from millisecond zero with zero grab hesitation.
+   * **Double-Click:** If the finger lifts off within 180ms without lateral motion ($< 6$ counts), drift is reversed and `BTN_LEFT 0` fires immediately. The desktop compositor registers a native, lag-free double click.
+   * **Tap-and-Drag:** If the stick is steered laterally ($\ge 6$ counts) or held stationary ($\ge 160\text{ms}$), drag lock engages instantly from millisecond zero with zero grab hesitation.
 
-3. **Motion-Coupled Drag Retention & Crisp Drop:**
+4. **Motion-Coupled Drag Retention & Crisp Drop:**
    * Steering tilts the stick sideways, which naturally drops downward vertical pressure $Z$ to near zero.
    * Active relative motion (`EV_REL`) sustains the drag lock continuously.
-   * Tuned 140ms inactivity grace window (lowered from 250ms) eliminates sticky drag linger while fully protecting against accidental drops during direction reversals.
+   * Tuned 140ms inactivity grace window eliminates sticky drag linger while fully protecting against accidental drops during direction reversals.
 
-4. **Steering Misclick & Drag-Collision Protection:**
-   * Rolling 80ms velocity window detects active cursor navigation ($\ge 8$ counts, tightened from 15).
-   * Downward pressure spikes during navigation are classified as steering force and ignored.
+5. **Steering Misclick & Drag-Collision Protection:**
+   * Decaying velocity memory tracks active pointer navigation.
    * If cursor movement begins during the Tap 2 primed window, just 3 counts of movement immediately aborts the primed state, ensuring seamless transition from clicking to steering without accidental drags.
+   * Native KDE/desktop pointer speeds and acceleration curves remain 100% untampered.
 
 ## Installation
 

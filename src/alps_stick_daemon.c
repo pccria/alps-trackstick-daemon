@@ -17,22 +17,22 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-#define DAEMON_VERSION               "0.3.2"
+#define DAEMON_VERSION               "0.4.0"
 
-/* --- Calibrated Transducer Thresholds (v2.2.0 Fine-Tuned) --- */
-#define TAP1_PRESSURE                28    /* Initial tap trigger: raised from 22 to eliminate accidental clicks while steering */
-#define TAP2_REBOUND_PRESSURE        18    /* Sensitive rebound trigger: tuned from 14 to avoid false drags on touch */
-#define RELEASE_PRESSURE             10    /* Baseline unload floor */
+/* --- Calibrated Transducer Thresholds (v0.4.0 Anti-Drift Engine) --- */
+#define TAP1_PRESSURE                22    /* Smooth, light activation floor: effortless tapping without hard whacking */
+#define TAP2_REBOUND_PRESSURE        15    /* Sensitive rebound trigger: natural low-amplitude second strike */
+#define RELEASE_PRESSURE             10    /* Mechanical unload baseline */
 #define MAX_TAP_DURATION_MS          180   /* Maximum duration for an impulse tap */
-#define MAX_TAP_MOTION               18    /* Maximum contact shear: tightened from 30 to reject small cursor adjustments */
-#define DOUBLE_TAP_WINDOW_MS         260   /* Window between Tap 1 release and Tap 2 touchdown: trimmed from 300ms */
-#define AWAIT_MOTION_CANCEL          3     /* Immediate navigation cancel: 3 counts aborts primed state on first movement packet */
-#define DRAG_START_MOTION            6     /* Instant drag lock: reduced from 15 to 6 counts to eliminate grab hesitation */
+#define MAX_TAP_MOTION               16    /* Maximum allowed lateral contact shear */
+#define DOUBLE_TAP_WINDOW_MS         260   /* Window between Tap 1 release and Tap 2 touchdown */
+#define AWAIT_MOTION_CANCEL          3     /* Navigation cancel: 3 counts aborts primed state on first movement packet */
+#define DRAG_START_MOTION            6     /* Instant drag lock: 6 counts of steering locks drag without hesitation */
 #define DRAG_START_HOLD_MS           160   /* Stationary hold duration on Tap 2 to engage drag */
-#define DRAG_RELEASE_GRACE_MS        140   /* Crisp drop release: lowered from 250ms to 140ms to eliminate sticky drop linger */
+#define DRAG_RELEASE_GRACE_MS        140   /* Crisp drop release: eliminates sticky drag linger */
 #define CLICK_HOLD_MS                15    /* Minimum hold time in ms for discrete click registration */
-#define PRE_MOTION_WINDOW_MS         80    /* Velocity window to detect active pointer navigation */
-#define PRE_MOTION_LIMIT             8     /* Motion counts within 80ms that classifies pressure as steering force (tightened from 15) */
+#define PRE_MOTION_WINDOW_MS         150   /* Velocity memory window to detect active pointer navigation */
+#define PRE_MOTION_LIMIT             10    /* Motion counts within window that classifies pressure as steering force */
 #define MOTION_CAP                   10000 /* Saturation cap to prevent integer overflow */
 
 typedef enum {
@@ -129,7 +129,10 @@ static int create_uinput_device(void) {
     }
 
     if (ioctl(ufd, UI_SET_EVBIT, EV_KEY) < 0 ||
-        ioctl(ufd, UI_SET_KEYBIT, BTN_LEFT) < 0) {
+        ioctl(ufd, UI_SET_KEYBIT, BTN_LEFT) < 0 ||
+        ioctl(ufd, UI_SET_EVBIT, EV_REL) < 0 ||
+        ioctl(ufd, UI_SET_RELBIT, REL_X) < 0 ||
+        ioctl(ufd, UI_SET_RELBIT, REL_Y) < 0) {
         close(ufd);
         return -1;
     }
@@ -278,7 +281,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (verbose) {
-        printf("ALPS Native C Daemon v%s (Physical Transducer Engine)\n", DAEMON_VERSION);
+        printf("ALPS Native C Daemon v%s (Anti-Drift Transducer Engine)\n", DAEMON_VERSION);
         printf("Connected: %s (%s)\n", dev_name, dev_path);
         if (speed >= -1.0f && speed <= 1.0f) {
             printf("Pointer Speed Override: %.2f (Forced Adaptive Profile)\n", speed);
@@ -298,7 +301,11 @@ int main(int argc, char *argv[]) {
     uint64_t last_rel_time = 0;
     int max_pressure = 0;
     int tap1_motion = 0;
+    int tap1_dx = 0;
+    int tap1_dy = 0;
     int tap2_motion = 0;
+    int tap2_dx = 0;
+    int tap2_dy = 0;
     int await_motion = 0;
     int pre_motion = 0;
 
@@ -400,15 +407,20 @@ int main(int argc, char *argv[]) {
         for (size_t i = 0; i < count; i++) {
             /* 1. Lateral motion events (EV_REL) */
             if (evs[i].type == EV_REL) {
-                /* Update rolling pre-press velocity accumulator */
-                if (now >= last_rel_time && (now - last_rel_time) > PRE_MOTION_WINDOW_MS) {
+                /* Smooth decaying pre-press velocity tracker */
+                uint64_t rel_dt = now >= last_rel_time ? (now - last_rel_time) : 0;
+                if (rel_dt > PRE_MOTION_WINDOW_MS) {
                     pre_motion = 0;
+                } else if (rel_dt > 60) {
+                    pre_motion /= 2;
                 }
                 pre_motion = add_motion_saturated(pre_motion, evs[i].value);
                 last_rel_time = now;
 
                 if (state == STATE_TAP1_DOWN) {
                     tap1_motion = add_motion_saturated(tap1_motion, evs[i].value);
+                    if (evs[i].code == REL_X) tap1_dx += evs[i].value;
+                    else if (evs[i].code == REL_Y) tap1_dy += evs[i].value;
                 } else if (state == STATE_AWAITING_TAP2) {
                     await_motion = add_motion_saturated(await_motion, evs[i].value);
                     if (await_motion >= AWAIT_MOTION_CANCEL) {
@@ -418,6 +430,9 @@ int main(int argc, char *argv[]) {
                     }
                 } else if (state == STATE_TAP2_DOWN) {
                     tap2_motion = add_motion_saturated(tap2_motion, evs[i].value);
+                    if (evs[i].code == REL_X) tap2_dx += evs[i].value;
+                    else if (evs[i].code == REL_Y) tap2_dy += evs[i].value;
+
                     if (tap2_motion >= DRAG_START_MOTION) {
                         state = STATE_DRAGGING;
                         last_active_time = now;
@@ -437,12 +452,14 @@ int main(int argc, char *argv[]) {
                         /* Ignore pressure spikes if stick was actively moving (steering force) */
                         uint64_t rel_elapsed = now >= last_rel_time ? (now - last_rel_time) : 0;
                         if (rel_elapsed <= PRE_MOTION_WINDOW_MS && pre_motion >= PRE_MOTION_LIMIT) {
-                            if (verbose) printf("  [TAP 1 IGNORED: Steering Force (pre_motion=%d, Z=%d)]\n", pre_motion, val);
+                            if (verbose) printf("  [TAP 1 IGNORED: Steering Velocity (pre_motion=%d, Z=%d)]\n", pre_motion, val);
                         } else {
                             state = STATE_TAP1_DOWN;
                             press_time = now;
                             max_pressure = val;
                             tap1_motion = 0;
+                            tap1_dx = 0;
+                            tap1_dy = 0;
                         }
                     }
                 } else if (state == STATE_TAP1_DOWN) {
@@ -453,6 +470,8 @@ int main(int argc, char *argv[]) {
                         state = STATE_TAP2_DOWN;
                         press_time = now;
                         tap2_motion = 0;
+                        tap2_dx = 0;
+                        tap2_dy = 0;
                         emit_down(ufd);
                         if (verbose) printf("  [TAP 2 CONTACT: Pressure=%d -> BTN_LEFT DOWN]\n", val);
                     }
@@ -466,31 +485,43 @@ int main(int argc, char *argv[]) {
                 if (val <= RELEASE_PRESSURE) {
                     if (state == STATE_TAP1_DOWN) {
                         uint64_t duration = now >= press_time ? (now - press_time) : 0;
-                        if (duration <= MAX_TAP_DURATION_MS && tap1_motion <= MAX_TAP_MOTION) {
+                        /* Physical Discriminator: Must be brief, under motion cap, AND dominated by vertical force */
+                        int is_valid_tap = (duration <= MAX_TAP_DURATION_MS) &&
+                                           (tap1_motion <= MAX_TAP_MOTION) &&
+                                           (tap1_motion <= 6 || max_pressure >= (tap1_motion * 3 / 2));
+
+                        if (is_valid_tap) {
+                            /* Anti-drift snap: reverse contact shear before clicking so cursor stays rock-solid on target */
+                            if (tap1_dx != 0) emit_event(ufd, EV_REL, REL_X, -tap1_dx);
+                            if (tap1_dy != 0) emit_event(ufd, EV_REL, REL_Y, -tap1_dy);
+
                             emit_down(ufd);
                             usleep(CLICK_HOLD_MS * 1000);
                             emit_up(ufd);
                             tap1_release_time = now;
                             state = STATE_AWAITING_TAP2;
                             await_motion = 0;
-                            if (verbose) printf("-> TAP 1 CLICK (duration=%lums, motion=%d, max_Z=%d)\n",
-                                                (unsigned long)duration, tap1_motion, max_pressure);
+                            if (verbose) printf("-> TAP 1 CLICK (duration=%lums, motion=%d, drift=[%+d, %+d], max_Z=%d)\n",
+                                                (unsigned long)duration, tap1_motion, tap1_dx, tap1_dy, max_pressure);
                         } else {
                             state = STATE_IDLE;
-                            if (verbose) printf("  [TAP 1 ABORTED: duration=%lums, motion=%d (max=%d)]\n",
-                                                (unsigned long)duration, tap1_motion, MAX_TAP_MOTION);
+                            if (verbose) printf("  [TAP 1 REJECTED: duration=%lums, motion=%d, max_Z=%d (ratio check)]\n",
+                                                (unsigned long)duration, tap1_motion, max_pressure);
                         }
                     } else if (state == STATE_TAP2_DOWN) {
                         uint64_t duration = now >= press_time ? (now - press_time) : 0;
                         if (duration <= MAX_TAP_DURATION_MS && tap2_motion < DRAG_START_MOTION) {
-                            /* Discrete second tap: ensure minimum hold time, then release immediately */
+                            /* Discrete second tap: ensure minimum hold time, reverse drift, and release immediately */
                             if (duration < CLICK_HOLD_MS) {
                                 usleep((useconds_t)(CLICK_HOLD_MS - duration) * 1000);
                             }
+                            if (tap2_dx != 0) emit_event(ufd, EV_REL, REL_X, -tap2_dx);
+                            if (tap2_dy != 0) emit_event(ufd, EV_REL, REL_Y, -tap2_dy);
+
                             emit_up(ufd);
                             state = STATE_IDLE;
-                            if (verbose) printf("-> DOUBLE CLICK COMPLETED (Tap 2 duration=%lums, motion=%d)\n",
-                                                (unsigned long)duration, tap2_motion);
+                            if (verbose) printf("-> DOUBLE CLICK COMPLETED (Tap 2 duration=%lums, motion=%d, drift=[%+d, %+d])\n",
+                                                (unsigned long)duration, tap2_motion, tap2_dx, tap2_dy);
                         } else {
                             /* Held or moved: lock into drag */
                             state = STATE_DRAGGING;
