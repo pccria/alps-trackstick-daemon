@@ -111,14 +111,32 @@ sudo make install
 
 This compiles `bin/alps-stick`, installs the binary to `/usr/local/bin/`, sets up the systemd service at `/etc/systemd/system/alps-stick.service`, and enables it to run on boot.
 
+### Guided Physical Calibration Wizard (`-C, --calibrate`)
+
+To automatically profile your trackstick's strain-gauge sensor and generate tailored physical parameters for your natural clicking rhythm:
+
+```bash
+sudo ./bin/alps-stick --calibrate
+```
+
+The guided 4-phase calibration wizard walks through:
+1. **Resting Baseline & Noise Floor**: Samples quiescent transducer state for 2 seconds to establish the physical noise floor.
+2. **Natural Single Taps**: Records 5 natural tap strikes to determine average peak contact force and dwell duration.
+3. **Double-Click Cadence & Rebound**: Measures 3 double-clicks to calculate rebound strike force and inter-tap cadence gap.
+4. **Steering Shear Profile**: Profiles 3 seconds of active navigation to establish the boundary between tap strikes and deliberate cursor steering.
+
+Upon completion, optimal parameters are derived and can be automatically saved directly into `/etc/alps-stick.conf`.
+
 ### Runtime CLI Options
 
-All physical thresholds and wheel behaviors can be tuned at runtime without recompiling:
+All physical thresholds and wheel behaviors can be tuned at runtime or configured via `/etc/alps-stick.conf`:
 
 ```text
 Usage: ./bin/alps-stick [OPTIONS]
 
 General Options:
+  -c, --config <path>          Path to configuration file (default: /etc/alps-stick.conf)
+  -C, --calibrate              Launch interactive terminal force calibration wizard
   -v, --verbose                Enable live gesture telemetry and state logging
   -s, --speed <float>          Override libinput pointer speed [-1.0 to 1.0]
                                (Default: unset — preserves native OS/KDE settings)

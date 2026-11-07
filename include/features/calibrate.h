@@ -2,9 +2,9 @@
  * @file calibrate.h
  * @brief Interactive terminal calibration wizard and transducer force telemetry.
  *
- * Provides a live ASCII visualizer of strain-gauge pressure, peak contact
- * force, lateral steering shear, and tap duration. Computes tailored
- * threshold recommendations for `/etc/alps-stick.conf`.
+ * Provides a guided 4-phase physical profiler (resting noise, single taps,
+ * double-click rebound, and steering shear), a statistical metrics dashboard,
+ * and automated `/etc/alps-stick.conf` configuration updating.
  */
 
 #ifndef ALPS_FEATURES_CALIBRATE_H
@@ -33,9 +33,48 @@ typedef struct {
 } alps_calibrate_tracker_t;
 
 /**
+ * @brief Multi-phase physical profile gathered across the guided calibration wizard.
+ */
+typedef struct {
+    /* Phase 1: Resting baseline & noise floor */
+    int noise_floor_z;               /**< Average resting pressure reading while untouched */
+    int noise_floor_max_z;           /**< Maximum transient noise spike observed while resting */
+
+    /* Phase 2: Single impulse taps */
+    int single_tap_count;            /**< Number of single taps recorded */
+    int single_tap_avg_peak;         /**< Average peak strike pressure for single taps */
+    int single_tap_min_peak;         /**< Lightest recorded single tap peak */
+    int single_tap_max_peak;         /**< Heaviest recorded single tap peak */
+    uint32_t single_tap_avg_dur_ms;  /**< Average contact dwell time in milliseconds */
+
+    /* Phase 3: Double-click cadence & rebound */
+    int double_tap_count;            /**< Number of double-tap pairs recorded */
+    int double_tap1_avg_peak;        /**< Average peak pressure of initial tap */
+    int double_tap2_avg_peak;        /**< Average peak pressure of rebound tap */
+    uint32_t double_tap_avg_gap_ms;  /**< Average inter-tap pause duration (ms) */
+
+    /* Phase 4: Navigation steering shear */
+    int steer_max_z;                 /**< Maximum vertical force during active steering */
+    int steer_max_motion;            /**< Maximum frame shear observed during active navigation */
+
+    /* Derived optimal parameters */
+    int rec_tap1_pressure;           /**< Recommended tap1_pressure */
+    int rec_tap2_pressure;           /**< Recommended tap2_rebound_pressure */
+    int rec_release_pressure;        /**< Recommended release_pressure */
+    uint32_t rec_tap_duration_ms;    /**< Recommended max_tap_duration_ms */
+    uint32_t rec_double_window_ms;   /**< Recommended double_tap_window_ms */
+    int rec_tap_motion;              /**< Recommended max_tap_motion */
+} alps_guided_profile_t;
+
+/**
  * @brief Initializes the calibration tracker to default zero values.
  */
 void alps_calibrate_tracker_init(alps_calibrate_tracker_t *tracker);
+
+/**
+ * @brief Initializes a guided physical profile container.
+ */
+void alps_calibrate_profile_init(alps_guided_profile_t *prof);
 
 /**
  * @brief Updates tracker telemetry with a newly received hardware event.
@@ -63,12 +102,7 @@ int alps_calibrate_tracker_feed_event(alps_calibrate_tracker_t *tracker,
 void alps_calibrate_format_bar(int z, int max_z, int width, char *out_buf, size_t out_max);
 
 /**
- * @brief Derives recommended configuration thresholds based on observed physical tap data.
- *
- * @param tracker     Tracker containing recorded tap sessions.
- * @param out_tap1    Output recommended tap1_pressure.
- * @param out_tap2    Output recommended tap2_rebound_pressure.
- * @param out_release Output recommended release_pressure.
+ * @brief Derives basic recommendations from an open-ended tracker session.
  */
 void alps_calibrate_compute_recommendation(const alps_calibrate_tracker_t *tracker,
                                           int *out_tap1,
@@ -76,7 +110,26 @@ void alps_calibrate_compute_recommendation(const alps_calibrate_tracker_t *track
                                           int *out_release);
 
 /**
- * @brief Runs the interactive full-terminal calibration loop.
+ * @brief Derives comprehensive optimal parameters from a guided 4-phase physical profile.
+ *
+ * @param prof Profile containing measured physical metrics from all 4 phases.
+ */
+void alps_calibrate_compute_guided_recommendations(alps_guided_profile_t *prof);
+
+/**
+ * @brief Merges and saves a calibrated physical profile into a configuration file.
+ *
+ * Preserves user comments, `[general]`, and `[scroll]` sections while updating
+ * or creating the `[tap]` calibration block.
+ *
+ * @param config_path Destination configuration file (e.g. `/etc/alps-stick.conf`).
+ * @param prof        Profile containing derived recommended parameters.
+ * @return 0 on success, -1 on I/O error, -2 on permission denied.
+ */
+int alps_calibrate_save_config(const char *config_path, const alps_guided_profile_t *prof);
+
+/**
+ * @brief Runs the guided interactive terminal calibration wizard.
  *
  * @param cfg Daemon configuration container.
  * @return 0 on clean exit, non-zero on error.
