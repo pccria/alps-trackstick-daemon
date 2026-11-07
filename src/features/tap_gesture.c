@@ -16,9 +16,14 @@
  * 3. **Hardware Anti-Drift Snap**:
  *    Tracks net signed cursor displacement (`tap1_dx`, `tap1_dy`) during the
  *    brief contact window and attaches the inverse vector (`-dx`, `-dy`) to
- *    the click action so the cursor snaps back to the exact pre-tap pixel.
+ *    the button press/release action so the cursor snaps back to the exact pre-tap pixel.
  *
- * 4. **Lateral Shear Drag Retention (`ALPS_TAP_STATE_DRAGGING`)**:
+ * 4. **100% Non-Blocking Zero-`usleep` Architecture**:
+ *    Button hold durations (`click_hold_ms`) are managed strictly through state
+ *    deadlines (`ALPS_TAP_STATE_TAP1_HOLD` and `ALPS_TAP_STATE_TAP2_HOLD`) and
+ *    `epoll_wait` timeouts. The event loop never stalls or sleeps.
+ *
+ * 5. **Lateral Shear Drag Retention (`ALPS_TAP_STATE_DRAGGING`)**:
  *    Pushing the trackstick sideways unloads vertical strain (`ABS_PRESSURE -> 0`).
  *    Active drags are therefore sustained by incoming `EV_REL` steering packets
  *    with a configurable inactivity grace window (`drag_release_grace_ms`).
@@ -38,7 +43,9 @@ alps_action_t alps_tap_gesture_reset(alps_tap_gesture_t *ctx) {
     alps_action_t act = alps_action_none();
     if (!ctx) return act;
 
-    if (ctx->state == ALPS_TAP_STATE_TAP2_DOWN ||
+    if (ctx->state == ALPS_TAP_STATE_TAP1_HOLD ||
+        ctx->state == ALPS_TAP_STATE_TAP2_DOWN ||
+        ctx->state == ALPS_TAP_STATE_TAP2_HOLD ||
         ctx->state == ALPS_TAP_STATE_DRAGGING) {
         act.type = ALPS_ACTION_BUTTON_UP;
     }
@@ -58,6 +65,9 @@ int alps_tap_gesture_get_timeout_ms(const alps_tap_gesture_t *ctx,
             uint64_t held = now_ms >= ctx->press_time ? (now_ms - ctx->press_time) : 0;
             return (held >= limit) ? 0 : (int)(limit - held);
         }
+        case ALPS_TAP_STATE_TAP1_HOLD: {
+            return (now_ms >= ctx->click_end_time) ? 0 : (int)(ctx->click_end_time - now_ms);
+        }
         case ALPS_TAP_STATE_AWAITING_TAP2: {
             uint64_t limit = (uint64_t)cfg->double_tap_window_ms;
             uint64_t elapsed = now_ms >= ctx->tap1_release_time ? (now_ms - ctx->tap1_release_time) : 0;
@@ -67,6 +77,9 @@ int alps_tap_gesture_get_timeout_ms(const alps_tap_gesture_t *ctx,
             uint64_t limit = (uint64_t)cfg->drag_start_hold_ms;
             uint64_t held = now_ms >= ctx->press_time ? (now_ms - ctx->press_time) : 0;
             return (held >= limit) ? 0 : (int)(limit - held);
+        }
+        case ALPS_TAP_STATE_TAP2_HOLD: {
+            return (now_ms >= ctx->click_end_time) ? 0 : (int)(ctx->click_end_time - now_ms);
         }
         case ALPS_TAP_STATE_DRAGGING: {
             uint64_t limit = (uint64_t)cfg->drag_release_grace_ms;
@@ -94,6 +107,25 @@ alps_action_t alps_tap_gesture_handle_timeout(alps_tap_gesture_t *ctx,
             }
             break;
         }
+        case ALPS_TAP_STATE_TAP1_HOLD: {
+            if (now_ms >= ctx->click_end_time) {
+                act.type = ALPS_ACTION_BUTTON_UP;
+                ctx->tap1_release_time = now_ms;
+                if (ctx->await_motion >= cfg->await_motion_cancel) {
+                    ctx->state = ALPS_TAP_STATE_IDLE;
+                    if (verbose) {
+                        printf("  [AWAIT CANCELLED: Navigation Steering during hold (%d counts)]\n",
+                               ctx->await_motion);
+                    }
+                } else {
+                    ctx->state = ALPS_TAP_STATE_AWAITING_TAP2;
+                    if (verbose) {
+                        printf("-> TAP 1 CLICK RELEASED (hold complete, awaiting tap 2)\n");
+                    }
+                }
+            }
+            break;
+        }
         case ALPS_TAP_STATE_AWAITING_TAP2: {
             uint64_t elapsed = now_ms >= ctx->tap1_release_time ? (now_ms - ctx->tap1_release_time) : 0;
             if (elapsed >= (uint64_t)cfg->double_tap_window_ms) {
@@ -108,6 +140,21 @@ alps_action_t alps_tap_gesture_handle_timeout(alps_tap_gesture_t *ctx,
                 ctx->last_active_time = now_ms;
                 if (verbose) {
                     printf("  [DRAG ENGAGED: Stationary Hold (%lums)]\n", (unsigned long)held);
+                }
+            }
+            break;
+        }
+        case ALPS_TAP_STATE_TAP2_HOLD: {
+            if (now_ms >= ctx->click_end_time) {
+                act.type = ALPS_ACTION_BUTTON_UP;
+                if (cfg->anti_drift_enabled) {
+                    act.drift_x = -ctx->tap2_dx;
+                    act.drift_y = -ctx->tap2_dy;
+                }
+                ctx->state = ALPS_TAP_STATE_IDLE;
+                if (verbose) {
+                    printf("-> DOUBLE CLICK COMPLETED (Tap 2 hold complete, drift=[%+d, %+d])\n",
+                           ctx->tap2_dx, ctx->tap2_dy);
                 }
             }
             break;
@@ -161,9 +208,10 @@ static alps_action_t process_relative_motion(alps_tap_gesture_t *ctx,
             }
             break;
 
+        case ALPS_TAP_STATE_TAP1_HOLD:
         case ALPS_TAP_STATE_AWAITING_TAP2:
             ctx->await_motion = alps_add_motion_saturated(ctx->await_motion, ev->value, cfg->motion_cap);
-            if (ctx->await_motion >= cfg->await_motion_cancel) {
+            if (ctx->state == ALPS_TAP_STATE_AWAITING_TAP2 && ctx->await_motion >= cfg->await_motion_cancel) {
                 /* Active pointer steering: cancel primed double-tap window immediately */
                 ctx->state = ALPS_TAP_STATE_IDLE;
                 if (verbose) {
@@ -186,6 +234,10 @@ static alps_action_t process_relative_motion(alps_tap_gesture_t *ctx,
                     printf("  [DRAG ENGAGED: Instant Steering Lock (%d counts)]\n", ctx->tap2_motion);
                 }
             }
+            break;
+
+        case ALPS_TAP_STATE_TAP2_HOLD:
+            /* Button-up timer is running; allow brief motion post-liftoff */
             break;
 
         case ALPS_TAP_STATE_DRAGGING:
@@ -234,17 +286,21 @@ static alps_action_t process_pressure(alps_tap_gesture_t *ctx,
         if (val > ctx->max_pressure) {
             ctx->max_pressure = val;
         }
-    } else if (ctx->state == ALPS_TAP_STATE_AWAITING_TAP2) {
+    } else if (ctx->state == ALPS_TAP_STATE_TAP1_HOLD || ctx->state == ALPS_TAP_STATE_AWAITING_TAP2) {
         if (val >= cfg->tap2_rebound_pressure) {
-            /* Zero-latency virtual button down on second strike touchdown */
+            int was_holding = (ctx->state == ALPS_TAP_STATE_TAP1_HOLD);
             ctx->state = ALPS_TAP_STATE_TAP2_DOWN;
             ctx->press_time = now;
             ctx->tap2_motion = 0;
             ctx->tap2_dx = 0;
             ctx->tap2_dy = 0;
-            act.type = ALPS_ACTION_BUTTON_DOWN;
+            if (!was_holding) {
+                /* Button was released; emit immediate virtual button down on second strike */
+                act.type = ALPS_ACTION_BUTTON_DOWN;
+            }
             if (verbose) {
-                printf("  [TAP 2 CONTACT: Pressure=%d -> BTN_LEFT DOWN]\n", val);
+                printf("  [TAP 2 CONTACT: Pressure=%d -> %s]\n",
+                       val, was_holding ? "Sustaining BTN_LEFT DOWN" : "BTN_LEFT DOWN");
             }
             return act;
         }
@@ -265,17 +321,17 @@ static alps_action_t process_pressure(alps_tap_gesture_t *ctx,
                                (ctx->tap1_motion <= 6 || ctx->max_pressure >= (ctx->tap1_motion * 3 / 2));
 
             if (is_valid_tap) {
-                act.type = ALPS_ACTION_CLICK;
-                act.hold_ms = cfg->click_hold_ms;
+                /* Non-blocking: emit button down + anti-drift immediately, then enter hold state */
+                act.type = ALPS_ACTION_BUTTON_DOWN;
                 if (cfg->anti_drift_enabled) {
                     act.drift_x = -ctx->tap1_dx;
                     act.drift_y = -ctx->tap1_dy;
                 }
-                ctx->tap1_release_time = now;
-                ctx->state = ALPS_TAP_STATE_AWAITING_TAP2;
+                ctx->state = ALPS_TAP_STATE_TAP1_HOLD;
+                ctx->click_end_time = now + (uint64_t)cfg->click_hold_ms;
                 ctx->await_motion = 0;
                 if (verbose) {
-                    printf("-> TAP 1 CLICK (duration=%lums, motion=%d, drift=[%+d, %+d], max_Z=%d)\n",
+                    printf("-> TAP 1 PRESS (duration=%lums, motion=%d, drift=[%+d, %+d], max_Z=%d)\n",
                            (unsigned long)duration, ctx->tap1_motion,
                            ctx->tap1_dx, ctx->tap1_dy, ctx->max_pressure);
                 }
@@ -290,19 +346,23 @@ static alps_action_t process_pressure(alps_tap_gesture_t *ctx,
             uint64_t duration = now >= ctx->press_time ? (now - ctx->press_time) : 0;
             if (duration <= (uint64_t)cfg->max_tap_duration_ms &&
                 ctx->tap2_motion < cfg->drag_start_motion) {
-                /* Discrete second tap: ensure minimum click hold time, apply anti-drift, and release */
-                act.type = ALPS_ACTION_BUTTON_UP;
+                /* Discrete second tap */
                 if (duration < (uint64_t)cfg->click_hold_ms) {
-                    act.hold_ms = (uint32_t)((uint64_t)cfg->click_hold_ms - duration);
-                }
-                if (cfg->anti_drift_enabled) {
-                    act.drift_x = -ctx->tap2_dx;
-                    act.drift_y = -ctx->tap2_dy;
-                }
-                ctx->state = ALPS_TAP_STATE_IDLE;
-                if (verbose) {
-                    printf("-> DOUBLE CLICK COMPLETED (Tap 2 duration=%lums, motion=%d, drift=[%+d, %+d])\n",
-                           (unsigned long)duration, ctx->tap2_motion, ctx->tap2_dx, ctx->tap2_dy);
+                    /* Hold for remainder of click_hold_ms non-blockingly via timer */
+                    ctx->state = ALPS_TAP_STATE_TAP2_HOLD;
+                    ctx->click_end_time = now + ((uint64_t)cfg->click_hold_ms - duration);
+                } else {
+                    /* Already held long enough: release immediately */
+                    act.type = ALPS_ACTION_BUTTON_UP;
+                    if (cfg->anti_drift_enabled) {
+                        act.drift_x = -ctx->tap2_dx;
+                        act.drift_y = -ctx->tap2_dy;
+                    }
+                    ctx->state = ALPS_TAP_STATE_IDLE;
+                    if (verbose) {
+                        printf("-> DOUBLE CLICK COMPLETED (Tap 2 duration=%lums, motion=%d, drift=[%+d, %+d])\n",
+                               (unsigned long)duration, ctx->tap2_motion, ctx->tap2_dx, ctx->tap2_dy);
+                    }
                 }
             } else {
                 /* Held or moved beyond threshold: lock into drag */

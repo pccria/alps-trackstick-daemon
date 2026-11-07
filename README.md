@@ -8,7 +8,7 @@ Under modern Linux desktop environments (Wayland/X11 with `libinput`), trackstic
 
 This daemon runs in the background, connects to the raw `/dev/input/event*` node of the ALPS pointing stick, evaluates contact dynamics through a pure, unit-tested finite state machine, and emits clean `BTN_LEFT` clicks and anti-drift corrections via `/dev/uinput` with zero CPU busy-polling.
 
-## Project Structure (`v0.5.0` Event-Action Pipeline)
+## Project Structure (`v0.6.0` Event-Action Pipeline)
 
 The codebase is organized into a clean, extensible **Event-Action Pipeline** separating pure gesture physics from Linux kernel `evdev`/`uinput` plumbing:
 
@@ -76,13 +76,16 @@ Rather than attempting to guess user intent through delayed confirmation heurist
 sudo apt install build-essential gcc
 ```
 
-### Build & Run Unit Tests
+### Build, Test, & Sanitize
 
 The transducer state machine can be verified deterministically without root privileges or hardware access:
 
 ```bash
 make
 make test
+
+# Run test suite under AddressSanitizer and UndefinedBehaviorSanitizer
+make sanitize
 ```
 
 ### Install Systemd Service

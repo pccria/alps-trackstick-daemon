@@ -1,6 +1,10 @@
 /**
  * @file emitter.c
  * @brief Implementation of the `/dev/uinput` virtual mouse and scroll emitter.
+ *
+ * All action dispatches are strictly non-blocking. Button down/up transitions
+ * and anti-drift relative motions are written directly to the uinput file descriptor
+ * with zero thread-blocking sleeps.
  */
 
 #ifndef _GNU_SOURCE
@@ -88,40 +92,38 @@ void alps_emitter_dispatch(int ufd, const alps_action_t *action) {
     }
 
     switch (action->type) {
-        case ALPS_ACTION_CLICK:
-            /* Emit anti-drift correction in the same frame as button press */
+        case ALPS_ACTION_BUTTON_DOWN:
+            /* Emit anti-drift relative motion snap in the same frame as button down */
             if (action->drift_x != 0) {
                 emit_raw(ufd, EV_REL, REL_X, action->drift_x);
             }
             if (action->drift_y != 0) {
                 emit_raw(ufd, EV_REL, REL_Y, action->drift_y);
             }
-            emit_raw(ufd, EV_KEY, BTN_LEFT, 1);
-            emit_syn(ufd);
-
-            if (action->hold_ms > 0) {
-                usleep((useconds_t)action->hold_ms * 1000U);
-            }
-
-            emit_raw(ufd, EV_KEY, BTN_LEFT, 0);
-            emit_syn(ufd);
-            break;
-
-        case ALPS_ACTION_BUTTON_DOWN:
             emit_raw(ufd, EV_KEY, BTN_LEFT, 1);
             emit_syn(ufd);
             break;
 
         case ALPS_ACTION_BUTTON_UP:
-            if (action->hold_ms > 0) {
-                usleep((useconds_t)action->hold_ms * 1000U);
-            }
             if (action->drift_x != 0) {
                 emit_raw(ufd, EV_REL, REL_X, action->drift_x);
             }
             if (action->drift_y != 0) {
                 emit_raw(ufd, EV_REL, REL_Y, action->drift_y);
             }
+            emit_raw(ufd, EV_KEY, BTN_LEFT, 0);
+            emit_syn(ufd);
+            break;
+
+        case ALPS_ACTION_CLICK:
+            /* Atomic single-frame click */
+            if (action->drift_x != 0) {
+                emit_raw(ufd, EV_REL, REL_X, action->drift_x);
+            }
+            if (action->drift_y != 0) {
+                emit_raw(ufd, EV_REL, REL_Y, action->drift_y);
+            }
+            emit_raw(ufd, EV_KEY, BTN_LEFT, 1);
             emit_raw(ufd, EV_KEY, BTN_LEFT, 0);
             emit_syn(ufd);
             break;

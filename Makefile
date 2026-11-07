@@ -28,7 +28,7 @@ SERVICE = alps-stick.service
 INSTALL_BIN = /usr/local/bin/alps-stick
 INSTALL_SERVICE = /etc/systemd/system/$(SERVICE)
 
-.PHONY: all test clean install uninstall
+.PHONY: all test sanitize clean install uninstall
 
 all: $(TARGET)
 
@@ -42,6 +42,9 @@ $(TEST_TARGET): $(TEST_SRCS) $(HEADERS)
 
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
+
+sanitize: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g
+sanitize: clean all test
 
 clean:
 	rm -rf bin

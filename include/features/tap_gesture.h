@@ -5,6 +5,10 @@
  * Implements a deterministic, zero-I/O finite state machine that translates
  * strain-gauge pressure (`ABS_PRESSURE`) and relative deflection (`REL_X`/`REL_Y`)
  * into discrete virtual mouse actions (`alps_action_t`).
+ *
+ * The engine is 100% non-blocking: discrete click hold durations are evaluated
+ * via dedicated states (`ALPS_TAP_STATE_TAP1_HOLD` and `ALPS_TAP_STATE_TAP2_HOLD`)
+ * using `epoll_wait` deadlines, eliminating any blocking `usleep()` delays.
  */
 
 #ifndef ALPS_FEATURES_TAP_GESTURE_H
@@ -21,8 +25,10 @@
 typedef enum {
     ALPS_TAP_STATE_IDLE = 0,       /**< Resting/navigating state, awaiting initial tap */
     ALPS_TAP_STATE_TAP1_DOWN,      /**< Finger in contact for Tap 1; measuring duration & shear */
-    ALPS_TAP_STATE_AWAITING_TAP2,  /**< Tap 1 clicked; primed window open for Tap 2 or drag */
+    ALPS_TAP_STATE_TAP1_HOLD,      /**< Tap 1 clicked; non-blocking button-down hold phase */
+    ALPS_TAP_STATE_AWAITING_TAP2,  /**< Tap 1 released; primed window open for Tap 2 or drag */
     ALPS_TAP_STATE_TAP2_DOWN,      /**< Finger in contact for Tap 2; BTN_LEFT is immediately DOWN */
+    ALPS_TAP_STATE_TAP2_HOLD,      /**< Tap 2 released rapidly; non-blocking minimum hold phase */
     ALPS_TAP_STATE_DRAGGING        /**< Active drag lock; sustained by EV_REL stream or pressure */
 } alps_tap_state_t;
 
@@ -32,6 +38,7 @@ typedef enum {
 typedef struct {
     alps_tap_state_t state;        /**< Current state machine phase */
     uint64_t press_time;           /**< Timestamp (ms) when current contact began */
+    uint64_t click_end_time;       /**< Timestamp (ms) when current non-blocking button press expires */
     uint64_t tap1_release_time;    /**< Timestamp (ms) when Tap 1 lifted off */
     uint64_t last_active_time;     /**< Timestamp (ms) of last motion or pressure during drag */
     uint64_t last_rel_time;        /**< Timestamp (ms) of last relative motion event */
@@ -42,7 +49,7 @@ typedef struct {
     int tap2_motion;               /**< Accumulated scalar motion magnitude during Tap 2 */
     int32_t tap2_dx;               /**< Net signed X drift accumulated during Tap 2 */
     int32_t tap2_dy;               /**< Net signed Y drift accumulated during Tap 2 */
-    int await_motion;              /**< Motion accumulated while in AWAITING_TAP2 */
+    int await_motion;              /**< Motion accumulated while in AWAITING_TAP2 or TAP1_HOLD */
     int pre_motion;                /**< Decaying pre-press navigation velocity accumulator */
 } alps_tap_gesture_t;
 
@@ -79,13 +86,13 @@ int alps_tap_gesture_get_timeout_ms(const alps_tap_gesture_t *ctx,
 
 /**
  * @brief Advances the state machine when an `epoll_wait` timer expires or before
- *        sleeping, emitting any timer-driven actions (such as drag release).
+ *        sleeping, emitting any timer-driven actions (such as drag release or click completion).
  *
  * @param ctx     Pointer to gesture context.
  * @param cfg     Pointer to active tap configuration.
  * @param now_ms  Current monotonic timestamp in milliseconds.
  * @param verbose Non-zero to log state transitions to `stdout`.
- * @return Action to dispatch (`ALPS_ACTION_BUTTON_UP` on drag expiry, else `ALPS_ACTION_NONE`).
+ * @return Action to dispatch (`ALPS_ACTION_BUTTON_UP` on timer expiry, else `ALPS_ACTION_NONE`).
  */
 alps_action_t alps_tap_gesture_handle_timeout(alps_tap_gesture_t *ctx,
                                               const alps_tap_config_t *cfg,

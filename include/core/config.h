@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 /** @brief Daemon semantic version string. */
-#define ALPS_DAEMON_VERSION                  "0.5.0"
+#define ALPS_DAEMON_VERSION                  "0.6.0"
 
 /* --- Calibrated Default Transducer Thresholds --- */
 #define ALPS_DEFAULT_TAP1_PRESSURE           22    /**< Smooth, feather-light activation floor for Tap 1 */
