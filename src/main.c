@@ -277,10 +277,10 @@ int main(int argc, char *argv[]) {
                cfg.tap.max_tap_motion, cfg.tap.drag_start_motion, cfg.tap.drag_release_grace_ms,
                cfg.tap.anti_drift_enabled ? "ON" : "OFF");
         if (cfg.scroll.enabled) {
-            printf("2D Kinetic Scroll: Enabled (Middle-Button Hold, Hi-Res Multiplier=%d, Axis-Lock=%s, Counter-Drift=%s)\n",
+            printf("2D Kinetic Scroll: Enabled (Middle-Button Hold, Hi-Res Multiplier=%d, Progressive=%s, Axis-Lock=%s)\n",
                    cfg.scroll.hires_multiplier,
-                   cfg.scroll.axis_lock_enabled ? "ON" : "OFF",
-                   cfg.scroll.counter_drift_enabled ? "ON" : "OFF");
+                   cfg.scroll.progressive_enabled ? "ON" : "OFF",
+                   cfg.scroll.axis_lock_enabled ? "ON" : "OFF");
         } else {
             printf("2D Kinetic Scroll: Disabled\n");
         }

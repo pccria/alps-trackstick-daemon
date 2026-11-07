@@ -48,9 +48,7 @@ void alps_config_init_defaults(alps_config_t *cfg) {
     cfg->scroll.hires_multiplier      = ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER;
     cfg->scroll.progressive_enabled   = ALPS_DEFAULT_SCROLL_PROGRESSIVE;
     cfg->scroll.accel_factor          = ALPS_DEFAULT_SCROLL_ACCEL_FACTOR;
-    cfg->scroll.dominance_ratio       = ALPS_DEFAULT_SCROLL_DOMINANCE_RATIO;
     cfg->scroll.axis_lock_enabled     = ALPS_DEFAULT_SCROLL_AXIS_LOCK;
-    cfg->scroll.counter_drift_enabled = ALPS_DEFAULT_SCROLL_COUNTER_DRIFT;
 }
 
 /**
@@ -210,12 +208,6 @@ int alps_config_load_file(alps_config_t *cfg, const char *path, int explicit_pat
         } else if (strcasecmp(key, "axis_lock") == 0 || strcasecmp(key, "axis_lock_enabled") == 0) {
             int b = 0;
             if (parse_bool_value(val, &b) == 0) cfg->scroll.axis_lock_enabled = b;
-        } else if (strcasecmp(key, "dominance_ratio") == 0) {
-            int v = 0;
-            if (parse_int_arg(val, 1, 10, &v) == 0) cfg->scroll.dominance_ratio = v;
-        } else if (strcasecmp(key, "counter_drift") == 0 || strcasecmp(key, "counter_drift_enabled") == 0) {
-            int b = 0;
-            if (parse_bool_value(val, &b) == 0) cfg->scroll.counter_drift_enabled = b;
         }
     }
 
@@ -264,7 +256,6 @@ void alps_config_print_help(const char *prog_name) {
     printf("      --scroll-accel <power>   Progressive acceleration power factor [0..20] (default: %d)\n",
            ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
     printf("      --no-axis-lock           Disable cross-axis deadband (allow raw 2D diagonal)\n");
-    printf("      --no-scroll-counter-drift Allow cursor to move freely during scroll\n");
 }
 
 int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
@@ -302,8 +293,6 @@ int alps_config_parse_args(alps_config_t *cfg, int argc, char *argv[]) {
             cfg->scroll.progressive_enabled = 0;
         } else if (strcmp(argv[i], "--no-axis-lock") == 0) {
             cfg->scroll.axis_lock_enabled = 0;
-        } else if (strcmp(argv[i], "--no-scroll-counter-drift") == 0) {
-            cfg->scroll.counter_drift_enabled = 0;
         } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--speed") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: Missing value for %s\n", argv[i]);
@@ -444,9 +433,7 @@ int alps_config_reset_file(const char *path) {
     fprintf(out, "# Acceleration power factor for progressive curve [0..20] (default: %d).\n", ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
     fprintf(out, "accel_factor = %d\n\n", ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
     fprintf(out, "# Enable continuous C^1 Hermite angle blending and vector cone deadband (default: true).\n");
-    fprintf(out, "axis_lock = %s\n\n", ALPS_DEFAULT_SCROLL_AXIS_LOCK ? "true" : "false");
-    fprintf(out, "# Lock cursor position with (-dx, -dy) counter-drift during scroll (default: true).\n");
-    fprintf(out, "counter_drift = %s\n", ALPS_DEFAULT_SCROLL_COUNTER_DRIFT ? "true" : "false");
+    fprintf(out, "axis_lock = %s\n", ALPS_DEFAULT_SCROLL_AXIS_LOCK ? "true" : "false");
 
     fclose(out);
 

@@ -72,8 +72,6 @@ static void test_vertical_scrolling_with_lateral_tremor_suppression(void) {
     /* For mag=6: 6*12 + (16*6/4) = 72 + 24 = 96 */
     assert(act.wheel_v_hires == -96); /* Scroll down */
     assert(act.wheel_h_hires == 0);   /* Lateral tremor suppressed! */
-    assert(act.drift_x == -1);        /* Pointer still locked */
-    assert(act.drift_y == -6);
 
     printf("  [PASS] test_vertical_scrolling_with_lateral_tremor_suppression\n");
 }
@@ -96,8 +94,6 @@ static void test_horizontal_scrolling_with_vertical_tremor_suppression(void) {
     /* For mag=8: 8*12 + (36*6/4) = 96 + 54 = 150 */
     assert(act.wheel_h_hires == 150); /* Scroll right */
     assert(act.wheel_v_hires == 0);   /* Vertical wobble suppressed! */
-    assert(act.drift_x == -8);
-    assert(act.drift_y == 2);
 
     printf("  [PASS] test_horizontal_scrolling_with_vertical_tremor_suppression\n");
 }
@@ -193,8 +189,6 @@ static void test_true_diagonal_simultaneous_panning(void) {
     assert(act.type == ALPS_ACTION_SCROLL);
     assert(act.wheel_h_hires == 54);
     assert(act.wheel_v_hires == 73);
-    assert(act.drift_x == -4);
-    assert(act.drift_y == 5);
 
     printf("  [PASS] test_true_diagonal_simultaneous_panning\n");
 }

@@ -61,8 +61,7 @@ static void test_parse_valid_config_file(void) {
         "hires_multiplier = 16\n"
         "progressive = false\n"
         "accel_factor = 9\n"
-        "axis_lock = 0\n"
-        "counter_drift = on\n";
+        "axis_lock = 0\n";
 
     ssize_t written = write(fd, content, strlen(content));
     assert(written == (ssize_t)strlen(content));
@@ -92,7 +91,6 @@ static void test_parse_valid_config_file(void) {
     assert(cfg.scroll.progressive_enabled == 0);
     assert(cfg.scroll.accel_factor == 9);
     assert(cfg.scroll.axis_lock_enabled == 0);
-    assert(cfg.scroll.counter_drift_enabled == 1);
 
     unlink(tmp_path);
     printf("  [PASS] test_parse_valid_config_file\n");
@@ -225,7 +223,6 @@ static void test_config_reset_file(void) {
     assert(rst_cfg.scroll.progressive_enabled == ALPS_DEFAULT_SCROLL_PROGRESSIVE);
     assert(rst_cfg.scroll.accel_factor == ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
     assert(rst_cfg.scroll.axis_lock_enabled == ALPS_DEFAULT_SCROLL_AXIS_LOCK);
-    assert(rst_cfg.scroll.counter_drift_enabled == ALPS_DEFAULT_SCROLL_COUNTER_DRIFT);
 
     unlink(tmp_path);
 

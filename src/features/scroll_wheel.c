@@ -152,17 +152,11 @@ alps_action_t alps_scroll_wheel_process_frame(alps_scroll_wheel_t *ctx,
     int32_t v_step = -eff_y;
     int32_t h_step = eff_x;
 
-    if (v_step == 0 && h_step == 0 && !cfg->counter_drift_enabled) {
+    if (v_step == 0 && h_step == 0) {
         return act;
     }
 
     act.type = ALPS_ACTION_SCROLL;
-
-    /* Counter-drift: anchor pointer with exact physical inverse */
-    if (cfg->counter_drift_enabled) {
-        act.drift_x = -dx;
-        act.drift_y = -dy;
-    }
 
     /* Continuous High-Resolution Wheel with Progressive Ballistics (120 units = 1 notch) */
     act.wheel_v_hires = compute_ballistics(v_step, cfg->hires_multiplier,
@@ -192,10 +186,9 @@ alps_action_t alps_scroll_wheel_process_frame(alps_scroll_wheel_t *ctx,
     }
 
     if (verbose && (act.wheel_v_hires != 0 || act.wheel_h_hires != 0)) {
-        printf("  [SCROLL 2D: hires=[%+d, %+d], detent=[%+d, %+d], drift=[%+d, %+d]]\n",
+        printf("  [SCROLL 2D: hires=[%+d, %+d], detent=[%+d, %+d]]\n",
                act.wheel_v_hires, act.wheel_h_hires,
-               act.wheel_v, act.wheel_h,
-               act.drift_x, act.drift_y);
+               act.wheel_v, act.wheel_h);
     }
 
     return act;

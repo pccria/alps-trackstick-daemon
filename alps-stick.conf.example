@@ -66,7 +66,3 @@
 # Enable continuous C^1 Hermite angle blending and vector cone deadband (default: true).
 # Suppresses accidental lateral browser navigation during vertical scrolling.
 # axis_lock = true
-
-# Lock cursor position with (-dx, -dy) counter-drift during scroll (default: true).
-# Keeps mouse pointer exactly stationary over the target element while scrolling.
-# counter_drift = true

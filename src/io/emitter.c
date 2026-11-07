@@ -130,14 +130,6 @@ void alps_emitter_dispatch(int ufd, const alps_action_t *action) {
 
         case ALPS_ACTION_SCROLL: {
             int emitted = 0;
-            if (action->drift_x != 0) {
-                emit_raw(ufd, EV_REL, REL_X, action->drift_x);
-                emitted = 1;
-            }
-            if (action->drift_y != 0) {
-                emit_raw(ufd, EV_REL, REL_Y, action->drift_y);
-                emitted = 1;
-            }
             if (action->wheel_v != 0) {
                 emit_raw(ufd, EV_REL, REL_WHEEL, action->wheel_v);
                 emitted = 1;

@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 /** @brief Daemon semantic version string. */
-#define ALPS_DAEMON_VERSION                  "0.9.0"
+#define ALPS_DAEMON_VERSION                  "0.9.1"
 
 /* --- Calibrated Default Transducer Thresholds --- */
 #define ALPS_DEFAULT_TAP1_PRESSURE           22    /**< Smooth, feather-light activation floor for Tap 1 */
@@ -38,9 +38,7 @@
 #define ALPS_DEFAULT_SCROLL_HIRES_MULTIPLIER 12    /**< Base high-res units per deflection count (sub-notch precision) */
 #define ALPS_DEFAULT_SCROLL_PROGRESSIVE      1     /**< Progressive non-linear acceleration enabled by default */
 #define ALPS_DEFAULT_SCROLL_ACCEL_FACTOR     6     /**< Quadratic acceleration factor for high-deflection glide */
-#define ALPS_DEFAULT_SCROLL_DOMINANCE_RATIO  2     /**< Axis dominance ratio (2:1) for vector cone tremor rejection */
 #define ALPS_DEFAULT_SCROLL_AXIS_LOCK        1     /**< Vector cone deadband enabled by default to prevent lateral drift */
-#define ALPS_DEFAULT_SCROLL_COUNTER_DRIFT    1     /**< Snap cursor back with (-dx, -dy) during scroll frames */
 
 /**
  * @brief Tunable parameters for the tap, double-click, and drag transducer.
@@ -71,9 +69,7 @@ typedef struct {
     int hires_multiplier;            /**< Base high-res scroll units per motion count (default: 12) */
     int progressive_enabled;         /**< 1 for non-linear ballistics acceleration, 0 for linear (default: 1) */
     int accel_factor;                /**< Acceleration power factor [0..20] (default: 6) */
-    int dominance_ratio;             /**< Dominance ratio (e.g. 2 for 2:1) for vector cone filtering */
     int axis_lock_enabled;           /**< 1 to enforce transient vector cone filtering, 0 for raw unconstrained 2D */
-    int counter_drift_enabled;       /**< 1 to counteract cursor displacement with (-dx, -dy) during scroll */
 } alps_scroll_config_t;
 
 /**

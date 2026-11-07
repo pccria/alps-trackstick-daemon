@@ -326,7 +326,6 @@ int alps_calibrate_save_config(const char *config_path, const alps_guided_profil
         fprintf(out, "progressive = true\n");
         fprintf(out, "accel_factor = %d\n", ALPS_DEFAULT_SCROLL_ACCEL_FACTOR);
         fprintf(out, "axis_lock = true\n");
-        fprintf(out, "counter_drift = true\n");
 
         fclose(out);
         if (rename(tmp_path, target) != 0) {
