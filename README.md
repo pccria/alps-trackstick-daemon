@@ -10,29 +10,29 @@ This daemon runs in the background, connects to the raw `/dev/input/event*` node
 
 ## Architecture: Physical Virtual Transducer
 
-Rather than attempting to guess user intent through delayed confirmation heuristics, `v0.3.0` implements a zero-latency **Physical Virtual Transducer**:
+Rather than attempting to guess user intent through delayed confirmation heuristics, `v0.3.1` implements a zero-latency **Physical Virtual Transducer**:
 
 1. **Lift-Off Gated Single Click (Tap 1):**
-   * Contact trigger: downward pressure $Z \ge 22$.
-   * Release: $Z \le 10$ within 180ms with lateral shear $\le 30$ counts.
+   * Contact trigger: downward pressure $Z \ge 28$ (raised from 22 to eliminate misclicks while navigating).
+   * Release: $Z \le 10$ within 180ms with lateral shear $\le 18$ counts (tightened from 30).
    * Emits a clean discrete `BTN_LEFT` pulse (15ms hold), perfectly registered by X11/Wayland event loops.
-   * Primes a 300ms window for Tap 2.
+   * Primes a 260ms window for Tap 2.
 
 2. **Immediate Virtual Button Down on Second Contact (Tap 2):**
-   * Sensitive rebound threshold ($Z \ge 14$) captures natural low-amplitude second strikes.
+   * Sensitive rebound threshold ($Z \ge 18$) captures natural second strikes without false triggers.
    * Emits `BTN_LEFT 1` **immediately on touchdown**.
-   * **Double-Click:** If the finger lifts off within 180ms without lateral motion, `BTN_LEFT 0` fires immediately. The desktop compositor registers a native, lag-free double click.
-   * **Tap-and-Drag:** If the stick is steered laterally ($\ge 15$ counts) or held stationary ($\ge 180\text{ms}$), drag lock engages instantly from millisecond zero.
+   * **Double-Click:** If the finger lifts off within 180ms without lateral motion ($< 6$ counts), `BTN_LEFT 0` fires immediately. The desktop compositor registers a native, lag-free double click.
+   * **Tap-and-Drag:** If the stick is steered laterally ($\ge 6$ counts, down from 15) or held stationary ($\ge 160\text{ms}$), drag lock engages instantly from millisecond zero with zero grab hesitation.
 
-3. **Motion-Coupled Drag Retention:**
+3. **Motion-Coupled Drag Retention & Crisp Drop:**
    * Steering tilts the stick sideways, which naturally drops downward vertical pressure $Z$ to near zero.
    * Active relative motion (`EV_REL`) sustains the drag lock continuously.
-   * Generous 250ms inactivity grace window prevents accidental drops during direction reversals and micro-pauses.
+   * Tuned 140ms inactivity grace window (lowered from 250ms) eliminates sticky drag linger while fully protecting against accidental drops during direction reversals.
 
-4. **Steering Misclick Protection:**
-   * Rolling 80ms velocity window detects active cursor navigation ($\ge 15$ counts).
-   * Downward pressure spikes during rapid navigation are classified as steering force and ignored.
-   * If cursor movement begins during the 300ms Tap 2 primed window, the primed state is canceled immediately, ensuring normal navigation remains unhindered.
+4. **Steering Misclick & Drag-Collision Protection:**
+   * Rolling 80ms velocity window detects active cursor navigation ($\ge 8$ counts, tightened from 15).
+   * Downward pressure spikes during navigation are classified as steering force and ignored.
+   * If cursor movement begins during the Tap 2 primed window, just 3 counts of movement immediately aborts the primed state, ensuring seamless transition from clicking to steering without accidental drags.
 
 ## Installation
 
