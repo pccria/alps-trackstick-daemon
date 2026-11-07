@@ -17,24 +17,29 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-#define DAEMON_VERSION          "1.2.0"
+#define DAEMON_VERSION               "0.2.0"
 
-/* --- Calibrated Thresholds --- */
-#define TAP_PRESSURE            22    /* Gentle touch threshold */
-#define RELEASE_PRESSURE        10    /* Baseline release pressure */
-#define MAX_TAP_DURATION_MS     220   /* Max bounce time for an impulse tap */
-#define MAX_TAP_MOTION          35    /* Tremor limit for taps (accommodates ~20 counts of physical contact shear) */
-#define DOUBLE_TAP_WINDOW_MS    450   /* Generous double-tap window matching desktop standards */
-#define DRAG_START_HOLD_MS      180   /* Hold time on Tap 2 before engaging drag lock if stationary */
-#define DRAG_RELEASE_GRACE_MS   180   /* Silence window (no motion + no pressure) to release drag */
-#define MOTION_CAP              10000 /* Saturation cap to prevent integer overflow */
+/* --- Calibrated Multi-Stage Thresholds --- */
+#define TAP1_PRESSURE                22    /* Initial tap trigger: strict to prevent palm/brush misclicks */
+#define TAP2_REBOUND_PRESSURE        14    /* Primed rebound trigger: sensitive for natural low-amplitude second tap */
+#define RELEASE_PRESSURE             10    /* Baseline unload floor */
+#define MAX_TAP_DURATION_MS          220   /* Maximum duration for an impulse tap */
+#define MAX_TAP_MOTION               35    /* Maximum allowable contact shear during an impulse tap */
+#define DOUBLE_TAP_WINDOW_MS         450   /* Generous window between Tap 1 lift-off and Tap 2 touchdown */
+#define DRAG_START_HOLD_MS           150   /* Stationary hold time on Tap 2 before locking drag */
+#define DRAG_START_MOTION            20    /* Lateral motion on Tap 2 before locking drag */
+#define DOUBLE_CONFIRM_WINDOW_MS     40    /* Post-impulse silence window to verify finger in air (3 serio packets) */
+#define DOUBLE_CONFIRM_MOTION_CAP    4     /* Maximum motion tolerated during 40ms silence window */
+#define DRAG_RELEASE_GRACE_MS        130   /* Mechanical silence window (no motion + no pressure) to release drag */
+#define MOTION_CAP                   10000 /* Saturation cap to prevent integer overflow */
 
 typedef enum {
-    STATE_IDLE,
-    STATE_TAP1_DOWN,
-    STATE_AWAITING_TAP2,
-    STATE_TAP2_DOWN,
-    STATE_DRAGGING
+    STATE_IDLE,                  /* 0: Rest state, waiting for Tap 1 */
+    STATE_TAP1_DOWN,             /* 1: Finger down on Tap 1 */
+    STATE_AWAITING_TAP2,         /* 2: Tap 1 released, primed for Tap 2 */
+    STATE_TAP2_DOWN,             /* 3: Finger down on Tap 2 */
+    STATE_TAP2_CONFIRM_DOUBLE,   /* 4: Tap 2 pressure dropped; verifying mechanical silence */
+    STATE_DRAGGING               /* 5: Button locked down; active dragging */
 } state_t;
 
 static volatile sig_atomic_t g_running = 1;
@@ -284,10 +289,12 @@ int main(int argc, char *argv[]) {
     state_t state = STATE_IDLE;
     uint64_t press_time = 0;
     uint64_t tap1_release_time = 0;
+    uint64_t tap2_confirm_start = 0;
     uint64_t last_active_time = 0;
     int max_pressure = 0;
     int tap1_motion = 0;
     int tap2_motion = 0;
+    int tap2_confirm_motion = 0;
 
     struct input_event evs[64];
 
@@ -309,17 +316,27 @@ int main(int argc, char *argv[]) {
                 emit_down(ufd);
                 last_active_time = now;
                 state = STATE_DRAGGING;
-                if (verbose) printf("  [DRAG ENGAGED: Hold Threshold Reached (%lums)]\n", (unsigned long)hold);
+                if (verbose) printf("  [DRAG ENGAGED: Stationary Hold (%lums)]\n", (unsigned long)hold);
             } else {
                 timeout_ms = (int)(DRAG_START_HOLD_MS - hold);
             }
+        } else if (state == STATE_TAP2_CONFIRM_DOUBLE) {
+            /* Silence timer: verify 40ms of no motion to confirm double-click */
+            uint64_t silence = now >= tap2_confirm_start ? (now - tap2_confirm_start) : 0;
+            if (silence >= DOUBLE_CONFIRM_WINDOW_MS) {
+                emit_quick_click(ufd);
+                state = STATE_IDLE;
+                if (verbose) printf("-> DOUBLE CLICK Completed! (Silence Verified)\n");
+            } else {
+                timeout_ms = (int)(DOUBLE_CONFIRM_WINDOW_MS - silence);
+            }
         } else if (state == STATE_DRAGGING) {
-            /* Drag release timer: releases after sustained silence (no motion and no pressure) */
+            /* Drag release timer: releases after mechanical silence (no motion and no pressure) */
             uint64_t inactive = now >= last_active_time ? (now - last_active_time) : 0;
             if (inactive >= DRAG_RELEASE_GRACE_MS) {
                 emit_up(ufd);
                 state = STATE_IDLE;
-                if (verbose) printf("  [DRAG COMPLETED: Released after silence (%d ms)]\n", DRAG_RELEASE_GRACE_MS);
+                if (verbose) printf("  [DRAG RELEASED: Mechanical Silence (%d ms)]\n", DRAG_RELEASE_GRACE_MS);
             } else {
                 timeout_ms = (int)(DRAG_RELEASE_GRACE_MS - inactive);
             }
@@ -339,13 +356,19 @@ int main(int argc, char *argv[]) {
                     emit_down(ufd);
                     last_active_time = now;
                     state = STATE_DRAGGING;
-                    if (verbose) printf("  [DRAG ENGAGED: Hold Threshold Reached]\n");
+                    if (verbose) printf("  [DRAG ENGAGED: Stationary Hold]\n");
+                }
+            } else if (state == STATE_TAP2_CONFIRM_DOUBLE) {
+                if (now >= tap2_confirm_start && (now - tap2_confirm_start) >= DOUBLE_CONFIRM_WINDOW_MS) {
+                    emit_quick_click(ufd);
+                    state = STATE_IDLE;
+                    if (verbose) printf("-> DOUBLE CLICK Completed! (Silence Verified)\n");
                 }
             } else if (state == STATE_DRAGGING) {
                 if (now >= last_active_time && (now - last_active_time) >= DRAG_RELEASE_GRACE_MS) {
                     emit_up(ufd);
                     state = STATE_IDLE;
-                    if (verbose) printf("  [DRAG COMPLETED: Released after silence]\n");
+                    if (verbose) printf("  [DRAG RELEASED: Mechanical Silence]\n");
                 }
             }
             continue;
@@ -378,83 +401,94 @@ int main(int argc, char *argv[]) {
         now = get_time_ms();
 
         for (size_t i = 0; i < count; i++) {
-            /* 1. Lateral motion events */
+            /* 1. Lateral motion events (EV_REL) */
             if (evs[i].type == EV_REL) {
                 if (state == STATE_TAP1_DOWN) {
                     tap1_motion = add_motion_saturated(tap1_motion, evs[i].value);
                 } else if (state == STATE_TAP2_DOWN) {
                     tap2_motion = add_motion_saturated(tap2_motion, evs[i].value);
-                    /* 
-                     * If steering motion exceeds the tap tremor threshold, user is actively
-                     * dragging across the desktop. Engage drag immediately!
-                     */
-                    if (tap2_motion > MAX_TAP_MOTION) {
+                    /* Steering motion during Tap 2 confirms active drag */
+                    if (tap2_motion >= DRAG_START_MOTION) {
                         emit_down(ufd);
                         last_active_time = now;
                         state = STATE_DRAGGING;
-                        if (verbose) printf("  [DRAG ENGAGED: Steering Motion Detected (%d counts)]\n", tap2_motion);
+                        if (verbose) printf("  [DRAG ENGAGED: Active Steering (%d counts)]\n", tap2_motion);
+                    }
+                } else if (state == STATE_TAP2_CONFIRM_DOUBLE) {
+                    tap2_confirm_motion = add_motion_saturated(tap2_confirm_motion, evs[i].value);
+                    if (tap2_confirm_motion >= DOUBLE_CONFIRM_MOTION_CAP) {
+                        /* Motion detected during confirmation: user is dragging, not double-clicking! */
+                        emit_down(ufd);
+                        last_active_time = now;
+                        state = STATE_DRAGGING;
+                        if (verbose) printf("  [DRAG ENGAGED: Motion in Confirmation Window (%d counts)]\n", tap2_confirm_motion);
                     }
                 } else if (state == STATE_DRAGGING) {
-                    /* Active movement keeps the drag firmly locked */
+                    /* Relative motion stream confirms continuous drag engagement */
                     last_active_time = now;
                 }
             }
-            /* 2. Downward pressure events */
+            /* 2. Downward pressure events (EV_ABS, ABS_PRESSURE) */
             else if (evs[i].type == EV_ABS && evs[i].code == ABS_PRESSURE) {
                 int val = evs[i].value;
 
                 /* --- TOUCH DOWN --- */
-                if (val >= TAP_PRESSURE) {
-                    if (state == STATE_IDLE) {
+                if (state == STATE_IDLE) {
+                    if (val >= TAP1_PRESSURE) {
                         state = STATE_TAP1_DOWN;
                         press_time = now;
                         max_pressure = val;
                         tap1_motion = 0;
-                    } else if (state == STATE_TAP1_DOWN) {
-                        if (val > max_pressure) max_pressure = val;
-                    } else if (state == STATE_AWAITING_TAP2) {
-                        /* Second tap contact: arm Tap 2 */
+                    }
+                } else if (state == STATE_TAP1_DOWN) {
+                    if (val > max_pressure) max_pressure = val;
+                } else if (state == STATE_AWAITING_TAP2) {
+                    /* Sensitive rebound threshold captures natural low-amplitude second strike */
+                    if (val >= TAP2_REBOUND_PRESSURE) {
                         state = STATE_TAP2_DOWN;
                         press_time = now;
                         tap2_motion = 0;
-                        if (verbose) printf("  [TAP 2 CONTACT: Awaiting Lift-Off or Drag]\n");
-                    } else if (state == STATE_DRAGGING) {
+                        if (verbose) printf("  [TAP 2 CONTACT: Pressure=%d]\n", val);
+                    }
+                } else if (state == STATE_TAP2_CONFIRM_DOUBLE) {
+                    /* Pressure bounced back immediately: user is pressing/dragging */
+                    if (val >= TAP2_REBOUND_PRESSURE) {
+                        emit_down(ufd);
+                        last_active_time = now;
+                        state = STATE_DRAGGING;
+                        if (verbose) printf("  [DRAG ENGAGED: Pressure Rebound in Confirmation Window (%d)]\n", val);
+                    }
+                } else if (state == STATE_DRAGGING) {
+                    if (val > RELEASE_PRESSURE) {
                         last_active_time = now;
                     }
                 }
-                /* --- HOLD: Resting pressure maintains active drag --- */
-                else if (val > RELEASE_PRESSURE) {
-                    if (state == STATE_DRAGGING) {
-                        last_active_time = now;
-                    }
-                }
-                /* --- LIFT OFF / PRESSURE DIP --- */
-                else if (val <= RELEASE_PRESSURE) {
+
+                /* --- LIFT OFF / PRESSURE UNLOAD --- */
+                if (val <= RELEASE_PRESSURE) {
                     if (state == STATE_TAP1_DOWN) {
                         uint64_t duration = now >= press_time ? (now - press_time) : 0;
                         if (duration <= MAX_TAP_DURATION_MS && tap1_motion <= MAX_TAP_MOTION) {
                             emit_quick_click(ufd);
                             tap1_release_time = now;
                             state = STATE_AWAITING_TAP2;
-                            if (verbose) printf("-> TAP 1 (Click!)\n");
+                            if (verbose) printf("-> TAP 1 (Click! duration=%lums, motion=%d)\n", (unsigned long)duration, tap1_motion);
                         } else {
                             state = STATE_IDLE;
                         }
                     } else if (state == STATE_TAP2_DOWN) {
                         uint64_t duration = now >= press_time ? (now - press_time) : 0;
-                        /* 
-                         * Lifted off quickly without sustained steering: pure Double Click!
-                         * Emits second clean click instantly without drag sticking.
-                         */
-                        if (duration <= MAX_TAP_DURATION_MS && tap2_motion <= MAX_TAP_MOTION) {
-                            emit_quick_click(ufd);
-                            state = STATE_IDLE;
-                            if (verbose) printf("-> DOUBLE CLICK Completed!\n");
+                        if (duration <= MAX_TAP_DURATION_MS) {
+                            /* Pressure dropped quickly: enter confirmation window to verify silence */
+                            tap2_confirm_start = now;
+                            tap2_confirm_motion = 0;
+                            state = STATE_TAP2_CONFIRM_DOUBLE;
                         } else {
+                            /* Held too long without moving: cancel */
                             state = STATE_IDLE;
                         }
                     }
-                    /* If STATE_DRAGGING: pressure dip is expected during steering; silence timer handles release */
+                    /* If STATE_DRAGGING: pressure drop is normal during steering; drag stays alive via EV_REL */
                 }
             }
         }
